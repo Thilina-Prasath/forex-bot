@@ -1,0 +1,12 @@
+services:
+  - type: cron
+    name: forex-signal-cron
+    env: python
+    schedule: "2 * * * *"  # හැම පැයකම 2 වෙනි විනාඩියේදී රන් වේ (Hourly)
+    buildCommand: pip install -r requirements.txt
+    startCommand: python cron_run.py
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        sync: false
+      - key: TELEGRAM_CHAT_ID
+        sync: false
