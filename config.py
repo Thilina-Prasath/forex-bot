@@ -1,17 +1,24 @@
 import os
 
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID")
- 
+# ─── Telegram ────────────────────────────────
+TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
+TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# ─── Trading Pairs (Yahoo Finance symbols) ───
+# ─── Alpha Vantage API (FREE) ─────────────────
+# Key ගන්නේ: https://www.alphavantage.co/support/#api-key
+# "GET FREE API KEY" → Email → Instant key
+ALPHA_VANTAGE_KEY  = os.environ.get("ALPHA_VANTAGE_KEY")
+
+# ─── Trading Pairs ───────────────────────────
 FOREX_PAIRS = {
-    "EURUSD":  "EUR",
-    "GBPUSD":  "GBP",
-    "USDJPY":  "JPY",
-    "AUDUSD":  "AUD",
-    "USDCHF":  "CHF",
-    "USDCAD":  "CAD",
+    "EURUSD":  "EURUSD=X",
+    "GBPUSD":  "GBPUSD=X",
+    "USDJPY":  "USDJPY=X",
+    "AUDUSD":  "AUDUSD=X",
+    "USDCHF":  "USDCHF=X",
+    "USDCAD":  "USDCAD=X",
+    "GOLD":    "GC=F",
+    "BTCUSD":  "BTC-USD",
 }
 
 # ─── Indicator Settings ──────────────────────
@@ -26,10 +33,10 @@ ATR_SL_MULTI    = 1.5
 ATR_TP_MULTI    = 2.5
 
 # ─── Signal Filter ───────────────────────────
-MIN_SCORE       = 3       
+MIN_SCORE       = 3
 
 # ─── Schedule ────────────────────────────────
-SIGNAL_TIME_UTC = "00:05"   # UTC 00:05 = SL 05:35 AM
+SIGNAL_TIME_UTC = "00:05"
 
 # ─── Data ────────────────────────────────────
-CANDLES_PERIOD  = "1y"      # 1 year daily data
+CANDLES_PERIOD  = "1y"

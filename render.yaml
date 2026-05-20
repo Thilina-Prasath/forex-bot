@@ -1,12 +1,17 @@
 services:
   - type: cron
-    name: forex-signal-cron
-    env: python
-    schedule: "2 * * * *"  # හැම පැයකම 2 වෙනි විනාඩියේදී රන් වේ (Hourly)
+    name: forex-signal-bot
+    runtime: python
+    # හැම පැය 4 කට වතාවක් — UTC 00:02, 04:02, 08:02, 12:02, 16:02, 20:02
+    # Alpha Vantage free: 25 req/day | 8 pairs × 6 scans = 48 req → ගැටලුවක් නැහැ
+    # Daily chart නිසා පැය 4 interval ප්‍රමාණවත්
+    schedule: "2 */4 * * *"
     buildCommand: pip install -r requirements.txt
     startCommand: python cron_run.py
     envVars:
       - key: TELEGRAM_BOT_TOKEN
         sync: false
       - key: TELEGRAM_CHAT_ID
+        sync: false
+      - key: ALPHA_VANTAGE_KEY
         sync: false

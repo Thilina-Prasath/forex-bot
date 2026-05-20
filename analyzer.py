@@ -1,3 +1,17 @@
+"""
+Forex Technical Analysis Engine v3
+────────────────────────────────────
+Indicators (6 points max):
+  1. EMA200    — Long-term trend
+  2. EMA 20/50 — Medium trend crossover
+  3. RSI       — Refined zones (no half points)
+  4. MACD      — Histogram + zero-line
+  5. Bollinger Bands — Band position
+  6. Momentum  — 3/4 candle price action
+
+Signal: BUY/SELL score >= MIN_SCORE → signal sent
+"""
+
 import pandas as pd
 import numpy as np
 from config import (
