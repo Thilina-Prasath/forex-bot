@@ -1,34 +1,27 @@
 """
-Forex Signal Bot — Cron Runner v4
+Forex Signal Bot — Cron Runner v5
 ───────────────────────────────────
-Render Cron Job විදිහට run වෙනවා.
-Alpha Vantage free API use කරනවා (cloud compatible).
-
-Free API limits:
-  • 25 requests/day
-  • 5 requests/minute → pairs අතර 13s delay
-
-render.yaml schedule: "2 */4 * * *" = හැම පැය 4 කට
+Render Cron Job විදිහට Hourly (පැයෙන් පැයට) run වෙනවා.
+TwelveData API use කරනවා (800 requests/day).
 """
 
 import sys
-import time
+import os
 from datetime import datetime, timezone
 
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, FOREX_PAIRS, ALPHA_VANTAGE_KEY
+from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, FOREX_PAIRS
 from data_fetcher      import DataFetcher
 from analyzer          import ForexAnalyzer
 from telegram_notifier import TelegramNotifier
 
-
 # Signal quality filter
-QUALITY_MIN_SCORE = 4   # 6 න් 4+
+QUALITY_MIN_SCORE = 4   # Indicators 6 න් 4+ එකඟ විය යුතුයි
 
 
 def main():
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     print(f"\n{'═'*52}")
-    print(f"  🚀 Cron Scan  |  {now}")
+    print(f"  🚀 Hourly Cron Scan  |  {now}")
     print(f"{'═'*52}")
 
     # Validate
@@ -36,9 +29,11 @@ def main():
         print("  ❌ Telegram credentials missing!")
         sys.exit(1)
 
-    if ALPHA_VANTAGE_KEY in ("YOUR_AV_KEY", "", None):
-        print("  ❌ ALPHA_VANTAGE_KEY missing in environment variables!")
-        print("  Get free key: https://www.alphavantage.co/support/#api-key")
+    # Check for TwelveData Key
+    twelvedata_key = os.environ.get("TWELVEDATA_KEY")
+    if not twelvedata_key:
+        print("  ❌ TWELVEDATA_KEY missing in environment variables!")
+        print("  Get free key: https://twelvedata.com/")
         sys.exit(1)
 
     fetcher  = DataFetcher()
@@ -47,23 +42,18 @@ def main():
     sent_count = 0
     pairs_list = list(FOREX_PAIRS.items())
 
-    for i, (name, ticker) in enumerate(pairs_list):
+    for name, ticker in pairs_list:
         print(f"\n  📊 {name} analyzing...")
 
         df = fetcher.get_candles(name, ticker)
         if df is None:
             print(f"     ❌ No data")
-            # Wait before next request even on failure
-            if i < len(pairs_list) - 1:
-                time.sleep(13)
             continue
 
         try:
             sig = ForexAnalyzer(name, df).generate()
         except Exception as e:
             print(f"     ❌ Analysis error: {e}")
-            if i < len(pairs_list) - 1:
-                time.sleep(13)
             continue
 
         d     = sig["direction"]
@@ -72,17 +62,13 @@ def main():
 
         print(f"     → {d:7s} | {s:3d}% | {score}/6", end="")
 
+        # Filter and Send
         if d != "NEUTRAL" and score >= QUALITY_MIN_SCORE:
             notifier.send_signal(sig)
             sent_count += 1
             print(f"  ✅ Sent!")
         else:
             print(f"  ⚪ Skipped")
-
-        # Alpha Vantage free: 5 requests/minute → wait 13s between requests
-        if i < len(pairs_list) - 1:
-            print(f"     ⏳ Waiting 13s (API rate limit)...")
-            time.sleep(13)
 
     print(f"\n{'═'*52}")
     if sent_count > 0:
