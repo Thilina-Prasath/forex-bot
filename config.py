@@ -6,14 +6,12 @@ TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID")
 
 # ─── Trading Pairs (Yahoo Finance symbols) ───
 FOREX_PAIRS = {
-    "EURUSD":  "EURUSD=X",
-    "GBPUSD":  "GBPUSD=X",
-    "USDJPY":  "USDJPY=X",
-    "AUDUSD":  "AUDUSD=X",
-    "USDCHF":  "USDCHF=X",
-    "USDCAD":  "USDCAD=X",
-    "GOLD":    "GC=F",
-    "BTCUSD":  "BTC-USD",
+    "EURUSD":  "EUR",
+    "GBPUSD":  "GBP",
+    "USDJPY":  "JPY",
+    "AUDUSD":  "AUD",
+    "USDCHF":  "CHF",
+    "USDCAD":  "CAD",
 }
 
 # ─── Indicator Settings ──────────────────────

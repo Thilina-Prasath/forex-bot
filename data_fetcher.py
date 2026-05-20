@@ -1,50 +1,66 @@
-import yfinance as yf
-import pandas as pd
 import requests
+import pandas as pd
+import os
 import time
-import random
 
 class DataFetcher:
     def __init__(self):
-        # විවිධ Web Browsers වල නම් (බොට් කෙනෙක් නෙවෙයි කියලා පෙන්වීමට)
-        self.user_agents = [
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36",
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:123.0) Gecko/20100101 Firefox/123.0",
-            "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        ]
+        # Render එකේ Environment Variable එකෙන් Key එක ගන්නවා
+        self.api_key = os.environ.get("ALPHA_VANTAGE_KEY")
 
-    def get_candles(self, symbol: str, yf_ticker: str, period: str = "730d") -> pd.DataFrame | None:
-        # තත්පර 3 ත් 6 ත් අතර අහඹු වෙලාවක් රැඳී සිටීම (Random Delay)
-        delay = random.uniform(3, 6)
-        time.sleep(delay)
-        
+    def get_candles(self, symbol: str, to_symbol: str, period: str = None) -> pd.DataFrame | None:
+        if not self.api_key:
+            print(" ❌ Error: ALPHA_VANTAGE_KEY is missing!")
+            return None
+
+        # Alpha Vantage API එකෙන් 1-Hour දත්ත (FX_INTRADAY) ඉල්ලීම
+        url = (
+            f"https://www.alphavantage.co/query?"
+            f"function=FX_INTRADAY&from_symbol={to_symbol}&to_symbol=USD"
+            f"&interval=60min&outputsize=full&apikey={self.api_key}"
+        )
+        # USD මුලට එන ඒවා (USDJPY, USDCAD, USDCHF) හරවන්න ඕනේ
+        if symbol.startswith("USD"):
+             url = (
+                f"https://www.alphavantage.co/query?"
+                f"function=FX_INTRADAY&from_symbol=USD&to_symbol={to_symbol}"
+                f"&interval=60min&outputsize=full&apikey={self.api_key}"
+            )
+
         try:
-            # අලුත් Session එකක් සාදා Random User-Agent එකක් යෙදීම
-            session = requests.Session()
-            session.headers.update({
-                "User-Agent": random.choice(self.user_agents),
-                "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
-                "Accept-Language": "en-US,en;q=0.5",
+            # Free API එකේ විනාඩියකට request 5ක් විතරයි පුළුවන්, ඒ නිසා පොඩි delay එකක් දානවා
+            time.sleep(12) 
+            
+            response = requests.get(url)
+            data = response.json()
+
+            # Error Messages ඇවිත්ද කියලා බැලීම
+            if "Error Message" in data or "Information" in data:
+                print(f"     ❌ API Error ({symbol}): {data.get('Information', 'Unknown Error')}")
+                return None
+
+            time_series = data.get("Time Series FX (60min)")
+            if not time_series:
+                return None
+
+            # දත්ත DataFrame එකකට හැරවීම
+            df = pd.DataFrame.from_dict(time_series, orient="index")
+            df = df.rename(columns={
+                "1. open": "Open",
+                "2. high": "High",
+                "3. low": "Low",
+                "4. close": "Close"
             })
+            
+            # දත්ත Float වලට හැරවීම සහ Sort කිරීම
+            df = df.astype(float)
+            df.index = pd.to_datetime(df.index)
+            df = df.sort_index()
 
-            # yf.download වෙනුවට වඩාත් ආරක්ෂිත yf.Ticker ක්‍රමය භාවිතා කිරීම
-            ticker = yf.Ticker(yf_ticker, session=session)
-            df = ticker.history(period=period, interval="1h", auto_adjust=True)
+            # Volume එකක් API එකෙන් දෙන්නේ නැති නිසා බොරු 0 ක් දානවා (කෝඩ් එකේ Error එන එක නවත්වන්න)
+            df['Volume'] = 0
 
-            if df is None or df.empty:
-                return None
-
-            if isinstance(df.columns, pd.MultiIndex):
-                df.columns = df.columns.get_level_values(0)
-
-            df = df[["Open", "High", "Low", "Close", "Volume"]].copy()
-            df.dropna(inplace=True)
-
-            if len(df) < 50:
-                return None
-
-            return df
+            return df.tail(300) # අන්තිම පැය 300 දත්ත යැවීම
 
         except Exception as e:
             print(f"     ❌ Fetch error ({symbol}): {e}")
