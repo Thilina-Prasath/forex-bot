@@ -4,21 +4,20 @@ import os
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# ─── Alpha Vantage API (FREE) ─────────────────
-# Key ගන්නේ: https://www.alphavantage.co/support/#api-key
-# "GET FREE API KEY" → Email → Instant key
-ALPHA_VANTAGE_KEY  = os.environ.get("ALPHA_VANTAGE_KEY")
+# ─── TwelveData API (FREE - 800 Requests/Day) ──
+# Key ගන්නේ: https://twelvedata.com/
+TWELVEDATA_KEY     = os.environ.get("TWELVEDATA_KEY", "")
 
-# ─── Trading Pairs ───────────────────────────
+# ─── Trading Pairs (TwelveData Format) ───────
 FOREX_PAIRS = {
-    "EURUSD":  "EURUSD=X",
-    "GBPUSD":  "GBPUSD=X",
-    "USDJPY":  "USDJPY=X",
-    "AUDUSD":  "AUDUSD=X",
-    "USDCHF":  "USDCHF=X",
-    "USDCAD":  "USDCAD=X",
-    "GOLD":    "GC=F",
-    "BTCUSD":  "BTC-USD",
+    "EURUSD":  "EUR/USD",
+    "GBPUSD":  "GBP/USD",
+    "USDJPY":  "USD/JPY",
+    "AUDUSD":  "AUD/USD",
+    "USDCHF":  "USD/CHF",
+    "USDCAD":  "USD/CAD",
+    "GOLD":    "XAU/USD",
+    "BTCUSD":  "BTC/USD",
 }
 
 # ─── Indicator Settings ──────────────────────
