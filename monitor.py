@@ -12,7 +12,7 @@ from telegram_notifier import TelegramNotifier
 
 
 # ─── Settings ────────────────────────────────────────────────────────
-SCAN_INTERVAL_HOURS  = 4      # හැම පැය 4 කට වතාවක් scan
+SCAN_INTERVAL_HOURS  = 4      
 QUALITY_MIN_SCORE    = 4      # 6 න් minimum 4 — strong signal only
 QUALITY_MIN_STRENGTH = 60     # minimum 60% strength
 
@@ -21,13 +21,12 @@ QUALITY_MIN_STRENGTH = 60     # minimum 60% strength
 fetcher  = DataFetcher()
 notifier = TelegramNotifier(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
 
-# Track sent signals — same pair same direction දවසකට එකයි
 # Format: { "EURUSD": {"direction": "BUY", "date": date(2026,5,19)} }
 sent_today: dict = {}
 
 
 def already_sent(pair: str, direction: str) -> bool:
-    """Same pair + same direction today දැනටමත් send කළාද?"""
+    """Same pair + same direction today """
     if pair not in sent_today:
         return False
     entry = sent_today[pair]
@@ -39,12 +38,7 @@ def mark_sent(pair: str, direction: str):
 
 
 def is_quality_signal(sig: dict) -> bool:
-    """
-    Good signal criteria:
-      1. BUY හෝ SELL (NEUTRAL නෙමෙයි)
-      2. Score 4/6 හෝ ඊට වැඩි
-      3. Strength 60%+ 
-    """
+    
     if sig["direction"] == "NEUTRAL":
         return False
 
@@ -57,9 +51,7 @@ def is_quality_signal(sig: dict) -> bool:
 
 
 def scan_all_pairs() -> list:
-    """
-    සියලු pairs scan කරලා quality signals return කරනවා.
-    """
+    
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     print(f"\n  🔍 Scanning...  |  {now}")
 

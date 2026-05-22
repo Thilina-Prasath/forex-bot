@@ -17,9 +17,6 @@ fetcher  = DataFetcher()
 notifier = TelegramNotifier(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  CORE — Analyze all pairs
-# ═══════════════════════════════════════════════════════════════════════
 
 def run_analysis():
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
@@ -70,9 +67,7 @@ def run_analysis():
     return all_signals
 
 
-# ═══════════════════════════════════════════════════════════════════════
 #  SINGLE PAIR
-# ═══════════════════════════════════════════════════════════════════════
 
 def analyze_one(name: str, ticker: str):
     print(f"\n  📊 Analyzing: {name}...")
@@ -95,9 +90,8 @@ def analyze_one(name: str, ticker: str):
     print(f"  ✅ Sent to Telegram\n")
 
 
-# ═══════════════════════════════════════════════════════════════════════
+
 #  SCHEDULER
-# ═══════════════════════════════════════════════════════════════════════
 
 def start_scheduler():
     print(f"\n  ⏰ Scheduler starting...")
@@ -117,10 +111,8 @@ def start_scheduler():
         print("\n\n  🛑 Scheduler stopped.\n")
 
 
-# ═══════════════════════════════════════════════════════════════════════
-#  MENU
-# ═══════════════════════════════════════════════════════════════════════
 
+#  MENU
 def validate_config() -> bool:
     errors = []
     if TELEGRAM_BOT_TOKEN in ("YOUR_BOT_TOKEN", ""):

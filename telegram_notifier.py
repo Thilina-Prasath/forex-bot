@@ -1,11 +1,6 @@
-"""
-Telegram Notifier v3 — Slim Messages
-──────────────────────────────────────
-Clean, readable signals — essential info only.
-"""
-
 import requests
 from datetime import datetime, timezone
+import time
 
 
 class TelegramNotifier:
@@ -26,6 +21,8 @@ class TelegramNotifier:
                 },
                 timeout=15,
             )
+            time.sleep(3) # avoid hitting rate limits if sending multiple messages
+
             return resp.status_code == 200
         except Exception as e:
             print(f"  Telegram error: {e}")

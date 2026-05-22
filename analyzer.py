@@ -1,6 +1,4 @@
 """
-Forex Technical Analysis Engine v3
-────────────────────────────────────
 Indicators (6 points max):
   1. EMA200    — Long-term trend
   2. EMA 20/50 — Medium trend crossover

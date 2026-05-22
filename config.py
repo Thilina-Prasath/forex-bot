@@ -1,14 +1,13 @@
 import os
 
-# ─── Telegram ────────────────────────────────
+# Telegram 
 TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
 TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
 
-# ─── TwelveData API (FREE - 800 Requests/Day) ──
-# Key ගන්නේ: https://twelvedata.com/
+# get key: https://twelvedata.com/
 TWELVEDATA_KEY     = os.environ.get("TWELVEDATA_KEY", "")
 
-# ─── Trading Pairs (TwelveData Format) ───────
+# Trading Pairs 
 FOREX_PAIRS = {
     "EURUSD":  "EUR/USD",
     "GBPUSD":  "GBP/USD",
@@ -20,7 +19,7 @@ FOREX_PAIRS = {
     "BTCUSD":  "BTC/USD",
 }
 
-# ─── Indicator Settings ──────────────────────
+# Indicator Settings
 RSI_PERIOD      = 14
 RSI_OVERSOLD    = 40
 RSI_OVERBOUGHT  = 60
@@ -31,11 +30,11 @@ ATR_PERIOD      = 14
 ATR_SL_MULTI    = 1.5
 ATR_TP_MULTI    = 2.5
 
-# ─── Signal Filter ───────────────────────────
+# Signal Filter
 MIN_SCORE       = 3
 
-# ─── Schedule ────────────────────────────────
+# Schedule
 SIGNAL_TIME_UTC = "00:05"
 
-# ─── Data ────────────────────────────────────
+# Data
 CANDLES_PERIOD  = "1y"

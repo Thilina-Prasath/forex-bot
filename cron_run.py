@@ -1,10 +1,3 @@
-"""
-Forex Signal Bot — Cron Runner v5
-───────────────────────────────────
-Render Cron Job විදිහට Hourly (පැයෙන් පැයට) run වෙනවා.
-TwelveData API use කරනවා (800 requests/day).
-"""
-
 import sys
 import os
 from datetime import datetime, timezone
@@ -15,7 +8,7 @@ from analyzer          import ForexAnalyzer
 from telegram_notifier import TelegramNotifier
 
 # Signal quality filter
-QUALITY_MIN_SCORE = 4   # Indicators 6 න් 4+ එකඟ විය යුතුයි
+QUALITY_MIN_SCORE = 4   
 
 
 def main():
