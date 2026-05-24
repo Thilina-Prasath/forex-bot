@@ -2,7 +2,6 @@ import requests
 from datetime import datetime, timezone
 import time
 
-
 class TelegramNotifier:
 
     def __init__(self, token: str, chat_id: str):
@@ -23,7 +22,12 @@ class TelegramNotifier:
             )
             time.sleep(3) # avoid hitting rate limits if sending multiple messages
 
-            return resp.status_code == 200
+            # Check for Telegram API errors 
+            if resp.status_code != 200:
+                print(f"     ❌ Telegram Rejected: {resp.text}")
+                return False
+
+            return True
         except Exception as e:
             print(f"  Telegram error: {e}")
             return False
@@ -57,8 +61,13 @@ class TelegramNotifier:
         filled = max(0, min(5, round(s / 20)))
         bar    = "█" * filled + "░" * (5 - filled)
 
-        # Reasons — short labels only
-        reasons = "\n".join(f"  • {r}" for r in sig["reasons"])
+        # HTML Error Fix: Telegram doesn't allow < or > in messages, so we need to escape them
+        
+        clean_reasons = []
+        for r in sig["reasons"]:
+            clean_r = r.replace("<", "&lt;").replace(">", "&gt;")
+            clean_reasons.append(f"  • {clean_r}")
+        reasons = "\n".join(clean_reasons)
 
         msg = (
             f"{icon} <b>{sym}  —  {label}</b>\n"
