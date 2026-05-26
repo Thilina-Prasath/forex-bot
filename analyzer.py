@@ -7,7 +7,10 @@ Indicators (6 points max):
   5. Bollinger Bands — Band position
   6. Momentum  — 3/4 candle price action
 
-Signal: BUY/SELL score >= MIN_SCORE → signal sent
+Signal Rules:
+  - BUY/SELL score >= MIN_SCORE → signal candidate
+  - RSI OR BB confirmation mandatory (Option B)
+  - EMA200 direction conflict rejected (Option C)
 """
 
 import pandas as pd
@@ -170,19 +173,61 @@ class ForexAnalyzer:
             sell_score += 1
             sell_why.append("Momentum ❌ 3 bear candles")
 
-        # Direction
-        if buy_score >= MIN_SCORE and buy_score > sell_score:
+        # ── OPTION B: RSI හෝ BB confirmation mandatory ──────────────────────
+        # EMA + MACD + Momentum පමණක් 4/6 ලබා ගත්ත් signal NEUTRAL කරනවා.
+        # RSI හෝ BB signal අවම වශයෙන් 1ක් තිබිය යුතුයි.
+
+        buy_rsi_bb  = any("RSI" in r or "BB" in r for r in buy_why)
+        sell_rsi_bb = any("RSI" in r or "BB" in r for r in sell_why)
+
+        # ── OPTION C: EMA200 conflict reject ────────────────────────────────
+        # Long-term trend එකට විරුද්ධව trade ගන්නේ නෑ.
+        # Price > EMA200 → BUY only  |  Price < EMA200 → SELL only
+
+        ema200_bullish = p > ema200_v
+
+        # Direction decision
+        if (
+            buy_score >= MIN_SCORE
+            and buy_score > sell_score
+            and buy_rsi_bb          # Option B
+            and ema200_bullish       # Option C
+        ):
             direction = "BUY"
             reasons   = buy_why
             strength  = round((buy_score / 6) * 100)
-        elif sell_score >= MIN_SCORE and sell_score > buy_score:
+
+        elif (
+            sell_score >= MIN_SCORE
+            and sell_score > buy_score
+            and sell_rsi_bb          # Option B
+            and not ema200_bullish   # Option C
+        ):
             direction = "SELL"
             reasons   = sell_why
             strength  = round((sell_score / 6) * 100)
+
         else:
             direction = "NEUTRAL"
-            reasons   = ["⚖️ No clear signal"]
             strength  = round((max(buy_score, sell_score) / 6) * 100)
+
+            # NEUTRAL වූ හේතුව reasons හි record කරනවා
+            neutral_reasons = []
+
+            if buy_score >= MIN_SCORE and buy_score > sell_score:
+                if not buy_rsi_bb:
+                    neutral_reasons.append("⚠️ RSI/BB confirmation නෑ — skip")
+                if not ema200_bullish:
+                    neutral_reasons.append("⚠️ EMA200 downtrend — BUY conflict")
+            elif sell_score >= MIN_SCORE and sell_score > buy_score:
+                if not sell_rsi_bb:
+                    neutral_reasons.append("⚠️ RSI/BB confirmation නෑ — skip")
+                if ema200_bullish:
+                    neutral_reasons.append("⚠️ EMA200 uptrend — SELL conflict")
+            else:
+                neutral_reasons.append("⚖️ No clear signal")
+
+            reasons = neutral_reasons
 
         # Risk Management
         sl = tp1 = tp2 = rr = None
