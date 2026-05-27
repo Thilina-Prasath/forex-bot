@@ -12,15 +12,18 @@ class DataFetcher:
             print("     ❌ Error: TWELVEDATA_KEY is missing!")
             return None
 
-        url = f"https://api.twelvedata.com/time_series?symbol={ticker}&interval=1h&outputsize=300&apikey={self.api_key}"
+        url = (
+            f"https://api.twelvedata.com/time_series"
+            f"?symbol={ticker}&interval=1h&outputsize=300&apikey={self.api_key}"
+        )
 
         try:
-            time.sleep(8) 
-            
+            time.sleep(8)
+
             response = requests.get(url, timeout=15)
             data = response.json()
 
-            # Error Messages check
+            # API error check
             if "status" in data and data["status"] == "error":
                 print(f"     ❌ API Error ({symbol}): {data.get('message', 'Unknown Error')}")
                 return None
@@ -30,22 +33,26 @@ class DataFetcher:
                 print(f"     ❌ No data values found for {symbol}")
                 return None
 
-            # data convert DataFrame 
+            # DataFrame build
             df = pd.DataFrame(values)
-            df['datetime'] = pd.to_datetime(df['datetime'])
-            df.set_index('datetime', inplace=True)
-            
+
+            # ── FutureWarning Fix ────────────────────────────────────────────
+            # කලින්: df['datetime'] = pd.to_datetime(df['datetime'])
+            # pandas 3.0 හිදී chained assignment break වෙනවා.
+            # Fix: assign directly without chaining
+            df = df.assign(datetime=pd.to_datetime(df["datetime"]))
+            df = df.set_index("datetime")
+
             df = df.rename(columns={
-                "open": "Open",
-                "high": "High",
-                "low": "Low",
-                "close": "Close"
+                "open":  "Open",
+                "high":  "High",
+                "low":   "Low",
+                "close": "Close",
             })
-            
+
             df = df.astype(float)
             df = df.sort_index()
-
-            df['Volume'] = 0
+            df["Volume"] = 0
 
             return df
 
