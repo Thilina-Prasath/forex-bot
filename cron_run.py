@@ -2,13 +2,13 @@ import sys
 import os
 from datetime import datetime, timezone
 
-from config import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, FOREX_PAIRS
+from config            import TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID, FOREX_PAIRS
 from data_fetcher      import DataFetcher
 from analyzer          import ForexAnalyzer
 from telegram_notifier import TelegramNotifier
 
 # Signal quality filter
-QUALITY_MIN_SCORE = 4   
+QUALITY_MIN_SCORE = 4
 
 
 def main():
@@ -17,14 +17,13 @@ def main():
     print(f"  🚀 Hourly Cron Scan  |  {now}")
     print(f"{'═'*52}")
 
-    # Validate
+    # Validate Telegram credentials
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
         print("  ❌ Telegram credentials missing!")
         sys.exit(1)
 
-    # Check for TwelveData Key
-    twelvedata_key = os.environ.get("TWELVEDATA_KEY")
-    if not twelvedata_key:
+    # Validate TwelveData key
+    if not os.environ.get("TWELVEDATA_KEY"):
         print("  ❌ TWELVEDATA_KEY missing in environment variables!")
         print("  Get free key: https://twelvedata.com/")
         sys.exit(1)
@@ -33,9 +32,8 @@ def main():
     notifier = TelegramNotifier(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
 
     sent_count = 0
-    pairs_list = list(FOREX_PAIRS.items())
 
-    for name, ticker in pairs_list:
+    for name, ticker in list(FOREX_PAIRS.items()):
         print(f"\n  📊 {name} analyzing...")
 
         df = fetcher.get_candles(name, ticker)
@@ -53,15 +51,39 @@ def main():
         score = sig["buy_score"] if d == "BUY" else sig["sell_score"]
         s     = sig["strength"]
 
-        print(f"     → {d:7s} | {s:3d}% | {score}/6", end="")
+        # ── CASE 1: Off-session — session filter blocked ─────────────────
+        if not sig.get("session_ok", True):
+            session_msg = sig.get("session", "Off-session")
+            print(f"     → {d:7s} | {s:3d}% | {score}/6  ⏸️  {session_msg}")
+            continue
 
-        # Filter and Send
+        # ── CASE 2: Signal valid — send to Telegram ──────────────────────
         if d != "NEUTRAL" and score >= QUALITY_MIN_SCORE:
             notifier.send_signal(sig)
             sent_count += 1
-            print(f"  ✅ Sent!")
+            session_msg = sig.get("session", "")
+            valid_until = sig.get("valid_until", "")
+            print(f"     → {d:7s} | {s:3d}% | {score}/6  ✅ Sent!  [{session_msg}]  valid: {valid_until}")
+
+        # ── CASE 3: NEUTRAL හෝ score low — block හේතුව print කරනවා ──────
         else:
-            print(f"  ⚪ Skipped")
+            reasons = sig.get("reasons", [])
+
+            # Block හේතුව classify කරනවා
+            if d != "NEUTRAL" and score >= QUALITY_MIN_SCORE:
+                # Should not reach here — safety fallback
+                block_reason = "Unknown filter"
+            elif d == "NEUTRAL":
+                # Analyzer NEUTRAL return කළා — reasons ඇතුළෙ හේතුව
+                if reasons:
+                    block_reason = reasons[0]
+                else:
+                    block_reason = "No clear signal"
+            else:
+                # Score low (< MIN_SCORE)
+                block_reason = f"Score too low ({score}/{QUALITY_MIN_SCORE} required)"
+
+            print(f"     → {d:7s} | {s:3d}% | {score}/6  ⚪ Skipped  [{block_reason}]")
 
     print(f"\n{'═'*52}")
     if sent_count > 0:
