@@ -12,18 +12,8 @@ Signal Rules:
   - RSI OR BB confirmation mandatory (Option B)
   - EMA200 direction conflict rejected (Option C)
   - Session filter: Pair-specific sessions only
-
-Session Coverage (LK Time / UTC):
-  Sydney   : 03:30 AM – 12:30 PM LK  (22:00 – 07:00 UTC)
-  Tokyo    : 05:30 AM – 02:30 PM LK  (00:00 – 09:00 UTC)
-  London   : 01:30 PM – 10:30 PM LK  (08:00 – 17:00 UTC)
-  New York : 06:30 PM – 03:30 AM LK  (13:00 – 22:00 UTC)
-
-Best pairs per session:
-  Sydney   → AUDUSD, AUDJPY, AUDNZD, NZDUSD
-  Tokyo    → USDJPY, AUDJPY, EURJPY, GBPJPY
-  London   → EURUSD, GBPUSD, EURGBP, USDCHF, USDCAD
-  NY       → EURUSD, GBPUSD, USDCAD, GOLD, BTCUSD
+  - 🚨 News Filter: High Impact News block
+  - 🛑 Max Pips Filter: 100 Pips max SL
 """
 
 import pandas as pd
@@ -35,52 +25,35 @@ from config import (
     ATR_PERIOD, ATR_SL_MULTI, ATR_TP_MULTI,
     MIN_SCORE,
 )
+from news_filter import check_news_conflict  # 🚨 අලුත් News Filter එක Import කිරීම
 
-# ── Signal validity window (minutes) ────────────────────────────────────────
 SIGNAL_VALID_MINUTES = 3
 
-# ── Pair → Valid sessions mapping ───────────────────────────────────────────
-# UTC hour ranges: (start_inclusive, end_exclusive)
-# Sydney:  22–07 UTC  (crosses midnight, special handling)
-# Tokyo:   00–09 UTC
-# London:  08–17 UTC
-# NY:      13–22 UTC
-
 PAIR_SESSIONS = {
-    # Australia session pairs
     "AUDUSD": [("sydney", "Australian Dollar — Sydney+Tokyo best")],
     "AUDJPY": [("sydney", "AUD+JPY — Sydney+Tokyo overlap best")],
     "AUDNZD": [("sydney", "Australian pairs — Sydney best")],
     "NZDUSD": [("sydney", "NZD — Sydney best")],
-
-    # Japan session pairs
     "USDJPY": [("tokyo",  "Japanese Yen — Tokyo best")],
     "EURJPY": [("tokyo",  "JPY cross — Tokyo best")],
     "GBPJPY": [("tokyo",  "JPY cross — Tokyo best")],
-
-    # London session pairs
     "EURUSD": [("london", "Euro — London+NY best")],
     "GBPUSD": [("london", "Pound — London+NY best")],
     "EURGBP": [("london", "Euro/Pound — London best")],
     "USDCHF": [("london", "Swiss Franc — London+NY best")],
-
-    # NY / multi-session pairs
     "USDCAD": [("london", "CAD — London+NY best")],
     "GOLD":   [("london", "Gold — London+NY best")],
     "XAUUSD": [("london", "Gold — London+NY best")],
     "BTCUSD": [("london", "BTC — NY best, 24/7 but filter applied")],
 }
 
-# Session UTC ranges
-# Sydney crosses midnight so handled separately
 SESSION_RANGES = {
-    "sydney": None,         # special: 22:00–07:00 UTC
-    "tokyo":  (0,  9),      # 00:00–09:00 UTC
-    "london": (8,  17),     # 08:00–17:00 UTC
-    "ny":     (13, 22),     # 13:00–22:00 UTC
+    "sydney": None,
+    "tokyo":  (0,  9),
+    "london": (8,  17),
+    "ny":     (13, 22),
 }
 
-# Sessions that are active per pair — we check ALL valid sessions for that pair
 PAIR_ACTIVE_SESSIONS = {
     "AUDUSD": ["sydney", "tokyo", "london"],
     "AUDJPY": ["sydney", "tokyo"],
@@ -106,29 +79,16 @@ SESSION_LABELS = {
     "ny":     "New York 🇺🇸",
 }
 
-
 def _in_session(session: str, hour_utc: int) -> bool:
-    """UTC hour ගිය session active ද check කරනවා."""
     if session == "sydney":
-        # Sydney: 22:00–07:00 UTC (midnight cross)
         return hour_utc >= 22 or hour_utc < 7
     start, end = SESSION_RANGES[session]
     return start <= hour_utc < end
 
-
 def get_session_status(symbol: str, dt_utc: datetime = None) -> tuple[bool, str]:
-    """
-    Symbol + UTC time දී pair-specific session active ද check.
-    Returns: (is_valid: bool, session_label: str)
-    """
-    if dt_utc is None:
-        dt_utc = datetime.now(timezone.utc)
-
+    if dt_utc is None: dt_utc = datetime.now(timezone.utc)
     hour = dt_utc.hour
-
-    # Symbol normalize (XAUUSD → GOLD etc.)
     sym = symbol.upper().replace("XAUUSD", "GOLD")
-
     active_sessions = PAIR_ACTIVE_SESSIONS.get(sym, ["london", "ny"])
     active_now = [s for s in active_sessions if _in_session(s, hour)]
 
@@ -136,27 +96,18 @@ def get_session_status(symbol: str, dt_utc: datetime = None) -> tuple[bool, str]
         labels = " + ".join(SESSION_LABELS[s] for s in active_now)
         return True, labels
 
-    # Active නෑ — next session කීයටද?
     lk_time = dt_utc + timedelta(hours=5, minutes=30)
-
-    # First valid session find
     next_session = active_sessions[0]
-    if next_session == "sydney":
-        next_utc_hour = 22
-    else:
-        next_utc_hour = SESSION_RANGES[next_session][0]
+    next_utc_hour = 22 if next_session == "sydney" else SESSION_RANGES[next_session][0]
 
     next_open = dt_utc.replace(hour=next_utc_hour, minute=0, second=0, microsecond=0)
-    if next_open <= dt_utc:
-        next_open += timedelta(days=1)
+    if next_open <= dt_utc: next_open += timedelta(days=1)
 
     wait = next_open - dt_utc
     wait_h = int(wait.total_seconds() // 3600)
     wait_m = int((wait.total_seconds() % 3600) // 60)
-
     next_label = SESSION_LABELS[next_session]
     return False, f"Off-session ⏸️  ({next_label} opens in {wait_h}h {wait_m}m)"
-
 
 class ForexAnalyzer:
 
@@ -191,20 +142,33 @@ class ForexAnalyzer:
 
     def _atr(self):
         h, l, c = self.df["High"], self.df["Low"], self.df["Close"]
-        tr = pd.concat([
-            h - l,
-            (h - c.shift()).abs(),
-            (l - c.shift()).abs()
-        ], axis=1).max(axis=1)
+        tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
         return tr.ewm(span=ATR_PERIOD, adjust=False).mean()
 
+    def _get_max_sl_dist(self):
+        """🛑 උපරිම Pips 100 සීමාව Pair එක අනුව ගණනය කිරීම"""
+        sym = self.symbol.upper()
+        if "JPY" in sym: 
+            return 1.00       # JPY: Pips 100 (උදා: 150.00 -> 149.00)
+        if "GOLD" in sym or "XAU" in sym: 
+            return 10.0       # GOLD: Points 10 (Pips 100) (උදා: 2000.00 -> 1990.00)
+        if "BTC" in sym: 
+            return 400.0      # BTC: $400 Drop
+        return 0.0100         # Standard: Pips 100 (උදා: 1.1000 -> 1.0900)
+
     def generate(self) -> dict:
-
-        # ── SESSION FILTER ───────────────────────────────────────────────────
         now_utc = datetime.now(timezone.utc)
+        
+        # ── 1. SESSION FILTER ────────────────────────────────────────────────
         session_ok, session_name = get_session_status(self.symbol, now_utc)
+        
+        # ── 2. NEWS FILTER ───────────────────────────────────────────────────
+        # විනාඩි 30 සීමාවේ රතු පාට නිව්ස් එකක් තියෙනවද කියලා බලනවා
+        has_news, news_title = check_news_conflict(self.symbol, buffer_minutes=30)
 
-        if not session_ok:
+        # Session එක අවුල් නම් හෝ News තියෙනවා නම්, මෙතනින්ම Block කරනවා
+        if not session_ok or has_news:
+            reject_reason = f"🚨 NEWS BLOCKED: {news_title}" if has_news else f"⏸️ {session_name}"
             return {
                 "symbol":       self.symbol,
                 "price":        round(float(self.df["Close"].iloc[-1]), 5),
@@ -212,20 +176,13 @@ class ForexAnalyzer:
                 "strength":     0,
                 "buy_score":    0,
                 "sell_score":   0,
-                "reasons":      [f"⏸️ {session_name}"],
+                "reasons":      [reject_reason],
                 "session":      session_name,
-                "session_ok":   False,
+                "session_ok":   session_ok,
                 "valid_until":  None,
-                "rsi":          None,
-                "ema20":        None,
-                "ema50":        None,
-                "ema200":       None,
-                "macd":         None,
-                "atr":          None,
-                "stop_loss":    None,
-                "take_profit1": None,
-                "take_profit2": None,
-                "risk_reward":  None,
+                "rsi":          None, "ema20": None, "ema50": None, "ema200": None, 
+                "macd": None, "atr": None, "stop_loss": None, "take_profit1": None, 
+                "take_profit2": None, "risk_reward": None,
             }
 
         # ── INDICATORS ──────────────────────────────────────────────────────
@@ -265,138 +222,98 @@ class ForexAnalyzer:
         buy_why    = []
         sell_why   = []
 
-        # 1. EMA200
         if p > ema200_v:
-            buy_score += 1
-            buy_why.append("EMA200 ✅ Uptrend")
+            buy_score += 1; buy_why.append("EMA200 ✅ Uptrend")
         else:
-            sell_score += 1
-            sell_why.append("EMA200 ❌ Downtrend")
+            sell_score += 1; sell_why.append("EMA200 ❌ Downtrend")
 
-        # 2. EMA 20/50
         if ema20_v > ema50_v:
-            buy_score += 1
-            buy_why.append("EMA20>50 ✅ Bullish")
+            buy_score += 1; buy_why.append("EMA20>50 ✅ Bullish")
         else:
-            sell_score += 1
-            sell_why.append("EMA20<50 ❌ Bearish")
+            sell_score += 1; sell_why.append("EMA20<50 ❌ Bearish")
 
-        # 3. RSI
         rsi_rising  = rsi_now > rsi_prev > rsi_prev2
         rsi_falling = rsi_now < rsi_prev < rsi_prev2
-
         if rsi_now < 40:
-            buy_score += 1
-            buy_why.append(f"RSI {rsi_now} ✅ Oversold")
+            buy_score += 1; buy_why.append(f"RSI {rsi_now} ✅ Oversold")
         elif rsi_now > 60:
-            sell_score += 1
-            sell_why.append(f"RSI {rsi_now} ❌ Overbought")
+            sell_score += 1; sell_why.append(f"RSI {rsi_now} ❌ Overbought")
         elif 40 <= rsi_now <= 47 and rsi_rising:
-            buy_score += 1
-            buy_why.append(f"RSI {rsi_now} ✅ Rising from low")
+            buy_score += 1; buy_why.append(f"RSI {rsi_now} ✅ Rising from low")
         elif 53 <= rsi_now <= 60 and rsi_falling:
-            sell_score += 1
-            sell_why.append(f"RSI {rsi_now} ❌ Falling from high")
+            sell_score += 1; sell_why.append(f"RSI {rsi_now} ❌ Falling from high")
 
-        # 4. MACD
         if macd_v > sig_v and hist_now > hist_pre:
-            buy_score += 1
-            buy_why.append("MACD ✅ Bullish momentum")
+            buy_score += 1; buy_why.append("MACD ✅ Bullish momentum")
         elif macd_v < sig_v and hist_now < hist_pre:
-            sell_score += 1
-            sell_why.append("MACD ❌ Bearish momentum")
+            sell_score += 1; sell_why.append("MACD ❌ Bearish momentum")
 
-        # 5. Bollinger Bands
         bb_range = bbu_v - bbl_v
         bb_pct   = (p - bbl_v) / bb_range if bb_range != 0 else 0.5
-
         if p <= bbl_v:
-            buy_score += 1
-            buy_why.append("BB ✅ Below lower band")
+            buy_score += 1; buy_why.append("BB ✅ Below lower band")
         elif p >= bbu_v:
-            sell_score += 1
-            sell_why.append("BB ❌ Above upper band")
+            sell_score += 1; sell_why.append("BB ❌ Above upper band")
         elif bb_pct < 0.30:
-            buy_score += 1
-            buy_why.append("BB ✅ Lower zone")
+            buy_score += 1; buy_why.append("BB ✅ Lower zone")
         elif bb_pct > 0.70:
-            sell_score += 1
-            sell_why.append("BB ❌ Upper zone")
+            sell_score += 1; sell_why.append("BB ❌ Upper zone")
 
-        # 6. Momentum
         if p > p1 > p2 > p3:
-            buy_score += 1
-            buy_why.append("Momentum ✅ 4 bull candles")
+            buy_score += 1; buy_why.append("Momentum ✅ 4 bull candles")
         elif p > p1 > p2:
-            buy_score += 1
-            buy_why.append("Momentum ✅ 3 bull candles")
+            buy_score += 1; buy_why.append("Momentum ✅ 3 bull candles")
         elif p < p1 < p2 < p3:
-            sell_score += 1
-            sell_why.append("Momentum ❌ 4 bear candles")
+            sell_score += 1; sell_why.append("Momentum ❌ 4 bear candles")
         elif p < p1 < p2:
-            sell_score += 1
-            sell_why.append("Momentum ❌ 3 bear candles")
+            sell_score += 1; sell_why.append("Momentum ❌ 3 bear candles")
 
-        # ── OPTION B: RSI හෝ BB mandatory ───────────────────────────────────
         buy_rsi_bb  = any("RSI" in r or "BB" in r for r in buy_why)
         sell_rsi_bb = any("RSI" in r or "BB" in r for r in sell_why)
-
-        # ── OPTION C: EMA200 conflict reject ────────────────────────────────
         ema200_bullish = p > ema200_v
 
         # ── DIRECTION ────────────────────────────────────────────────────────
-        if (
-            buy_score >= MIN_SCORE
-            and buy_score > sell_score
-            and buy_rsi_bb
-            and ema200_bullish
-        ):
-            direction = "BUY"
-            reasons   = buy_why
-            strength  = round((buy_score / 6) * 100)
-
-        elif (
-            sell_score >= MIN_SCORE
-            and sell_score > buy_score
-            and sell_rsi_bb
-            and not ema200_bullish
-        ):
-            direction = "SELL"
-            reasons   = sell_why
-            strength  = round((sell_score / 6) * 100)
-
+        if buy_score >= MIN_SCORE and buy_score > sell_score and buy_rsi_bb and ema200_bullish:
+            direction = "BUY"; reasons = buy_why; strength = round((buy_score / 6) * 100)
+        elif sell_score >= MIN_SCORE and sell_score > buy_score and sell_rsi_bb and not ema200_bullish:
+            direction = "SELL"; reasons = sell_why; strength = round((sell_score / 6) * 100)
         else:
-            direction = "NEUTRAL"
-            strength  = round((max(buy_score, sell_score) / 6) * 100)
+            direction = "NEUTRAL"; strength = round((max(buy_score, sell_score) / 6) * 100)
             neutral_reasons = []
-
             if buy_score >= MIN_SCORE and buy_score > sell_score:
-                if not buy_rsi_bb:
-                    neutral_reasons.append("⚠️ RSI/BB confirmation නෑ — skip")
-                if not ema200_bullish:
-                    neutral_reasons.append("⚠️ EMA200 downtrend — BUY conflict")
+                if not buy_rsi_bb: neutral_reasons.append("⚠️ RSI/BB confirmation නෑ — skip")
+                if not ema200_bullish: neutral_reasons.append("⚠️ EMA200 downtrend — BUY conflict")
             elif sell_score >= MIN_SCORE and sell_score > buy_score:
-                if not sell_rsi_bb:
-                    neutral_reasons.append("⚠️ RSI/BB confirmation නෑ — skip")
-                if ema200_bullish:
-                    neutral_reasons.append("⚠️ EMA200 uptrend — SELL conflict")
+                if not sell_rsi_bb: neutral_reasons.append("⚠️ RSI/BB confirmation නෑ — skip")
+                if ema200_bullish: neutral_reasons.append("⚠️ EMA200 uptrend — SELL conflict")
             else:
                 neutral_reasons.append("⚖️ No clear signal")
-
             reasons = neutral_reasons
 
-        # ── RISK MANAGEMENT ──────────────────────────────────────────────────
+        # ── 🛑 RISK MANAGEMENT (100 Pips Limit) ──────────────────────────────
         sl = tp1 = tp2 = rr = None
-        if direction == "BUY":
-            sl  = round(p - atr_v * ATR_SL_MULTI,       5)
-            tp1 = round(p + atr_v * ATR_TP_MULTI * 0.6, 5)
-            tp2 = round(p + atr_v * ATR_TP_MULTI,       5)
-            rr  = round(ATR_TP_MULTI / ATR_SL_MULTI, 1)
-        elif direction == "SELL":
-            sl  = round(p + atr_v * ATR_SL_MULTI,       5)
-            tp1 = round(p - atr_v * ATR_TP_MULTI * 0.6, 5)
-            tp2 = round(p - atr_v * ATR_TP_MULTI,       5)
-            rr  = round(ATR_TP_MULTI / ATR_SL_MULTI, 1)
+        if direction in ["BUY", "SELL"]:
+            # ATR මඟින් SL දුර ගණනය
+            sl_dist = atr_v * ATR_SL_MULTI
+            
+            # උපරිම Pips 100 සීමාව යෙදීම (Limit to Max Pips)
+            max_sl_dist = self._get_max_sl_dist()
+            actual_sl_dist = min(sl_dist, max_sl_dist)
+            
+            # Risk/Reward අනුපාතය නොවෙනස්ව තබාගැනීමට TP ගණනය (R:R ratio)
+            ratio = ATR_TP_MULTI / ATR_SL_MULTI
+            actual_tp_dist = actual_sl_dist * ratio
+
+            if direction == "BUY":
+                sl  = round(p - actual_sl_dist,       5)
+                tp1 = round(p + actual_tp_dist * 0.6, 5)
+                tp2 = round(p + actual_tp_dist,       5)
+            elif direction == "SELL":
+                sl  = round(p + actual_sl_dist,       5)
+                tp1 = round(p - actual_tp_dist * 0.6, 5)
+                tp2 = round(p - actual_tp_dist,       5)
+                
+            rr = round(ratio, 1)
 
         # ── SIGNAL VALIDITY WINDOW ───────────────────────────────────────────
         valid_until_utc = now_utc + timedelta(minutes=SIGNAL_VALID_MINUTES)
@@ -404,24 +321,10 @@ class ForexAnalyzer:
         valid_until_str = valid_until_lk.strftime("%I:%M %p") + " (LK)"
 
         return {
-            "symbol":       self.symbol,
-            "price":        p,
-            "direction":    direction,
-            "strength":     strength,
-            "buy_score":    buy_score,
-            "sell_score":   sell_score,
-            "reasons":      reasons,
-            "session":      session_name,
-            "session_ok":   True,
-            "valid_until":  valid_until_str,
-            "rsi":          rsi_now,
-            "ema20":        ema20_v,
-            "ema50":        ema50_v,
-            "ema200":       ema200_v,
-            "macd":         macd_v,
-            "atr":          atr_v,
-            "stop_loss":    sl,
-            "take_profit1": tp1,
-            "take_profit2": tp2,
-            "risk_reward":  rr,
+            "symbol":       self.symbol, "price": p, "direction": direction,
+            "strength":     strength, "buy_score": buy_score, "sell_score": sell_score,
+            "reasons":      reasons, "session": session_name, "session_ok": True,
+            "valid_until":  valid_until_str, "rsi": rsi_now, "ema20": ema20_v,
+            "ema50":        ema50_v, "ema200": ema200_v, "macd": macd_v, "atr": atr_v,
+            "stop_loss":    sl, "take_profit1": tp1, "take_profit2": tp2, "risk_reward": rr,
         }
