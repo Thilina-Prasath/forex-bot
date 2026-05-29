@@ -51,10 +51,16 @@ def main():
         score = sig["buy_score"] if d == "BUY" else sig["sell_score"]
         s     = sig["strength"]
 
-        # ── CASE 1: Off-session — session filter blocked ─────────────────
+        # ── CASE 1: Off-session ──────────────────────────────────────────
         if not sig.get("session_ok", True):
             session_msg = sig.get("session", "Off-session")
             print(f"     → {d:7s} | {s:3d}% | {score}/6  ⏸️  {session_msg}")
+            continue
+
+        # ── CASE 1b: News blocked ─────────────────────────────────────────
+        if sig.get("news_blocked", False):
+            reason = sig.get("reasons", ["🚨 News blocked"])[0]
+            print(f"     → {d:7s} | {s:3d}% | {score}/6  {reason}")
             continue
 
         # ── CASE 2: Signal valid — send to Telegram ──────────────────────

@@ -110,9 +110,11 @@ class TelegramNotifier:
             f"🔍 Signals  :\n{clean_reasons}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"⏰ {time_str}\n"
-            f"⚡ <b>Valid until: {valid_until}</b>\n"   # ← NEW
-            f"❌ <b>මේ වෙලාවෙන් පසු skip කරන්න!</b>\n"  # ← NEW
-            f"<i>⚠️ Demo/educational use only.</i>"
+            f"⚡ <b>Valid until: {valid_until}</b>\n"
+            f"❌ <b>මේ වෙලාවෙන් පසු skip කරන්න!</b>\n"
+            + (f"━━━━━━━━━━━━━━━━━━━━\n{sig.get('pos_size_warn')}\n"
+               if sig.get("pos_size_warn") else "")
+            + f"<i>⚠️ Demo/educational use only.</i>"
         )
         return msg
 
