@@ -271,9 +271,13 @@ class ForexAnalyzer:
             buy_score += 1;  buy_why.append(f"RSI {rsi_now} ✅ Oversold")
         elif rsi_now > 60:
             sell_score += 1; sell_why.append(f"RSI {rsi_now} ❌ Overbought")
-        elif 40 <= rsi_now <= 47 and rsi_rising:
+        elif 40 <= rsi_now <= 50 and rsi_rising:
+            # ── RSI zone expanded: 47 → 50 ──────────────────────────────────
+            # RSI 48-50 rising = bullish momentum building (previously dead zone)
             buy_score += 1;  buy_why.append(f"RSI {rsi_now} ✅ Rising from low")
-        elif 53 <= rsi_now <= 60 and rsi_falling:
+        elif 50 <= rsi_now <= 60 and rsi_falling:
+            # ── RSI zone expanded: 53 → 50 ──────────────────────────────────
+            # RSI 50-52 falling = bearish momentum building (previously dead zone)
             sell_score += 1; sell_why.append(f"RSI {rsi_now} ❌ Falling from high")
 
         # 4. MACD
