@@ -32,13 +32,14 @@ from news_filter import check_news_conflict
 SIGNAL_VALID_MINUTES = 3
 
 # ── Volatile pairs — higher MIN_SCORE required ───────────────────────────────
+# GOLD, BTCUSD: ATR ලොකු, false signals ගොඩාක් — 5/6 mandatory
 VOLATILE_PAIRS     = {"GOLD", "XAUUSD", "BTCUSD"}
 VOLATILE_MIN_SCORE = 5
 
 # ── Position size warnings ───────────────────────────────────────────────────
 POSITION_SIZE_WARNINGS = {
-    "GOLD":   "⚠️ GOLD — Max 0.01 lot use කරන්න!",
-    "XAUUSD": "⚠️ GOLD — Max 0.01 lot use කරන්න!",
+    "GOLD":   "⚠️ GOLD — Max 0.01 Troy Oz only! (0.01oz x $20 SL = $0.20 max loss)",
+    "XAUUSD": "⚠️ GOLD — Max 0.01 Troy Oz only! (0.01oz x $20 SL = $0.20 max loss)",
     "BTCUSD": "⚠️ BTC  — Max 0.001 lot use කරන්න!",
 }
 
@@ -131,7 +132,6 @@ def _empty_result(symbol: str, price: float, reason: str,
         "ema200":        None,
         "macd":          None,
         "atr":           None,
-        "adx":           None,
         "stop_loss":     None,
         "take_profit1":  None,
         "take_profit2":  None,
@@ -215,20 +215,26 @@ class ForexAnalyzer:
         pdm14 = pdm.rolling(period).sum()
         mdm14 = mdm.rolling(period).sum()
 
-        # Avoid division by zero
-        tr14_zero = tr14.replace(0, np.nan)
-        pdi = 100 * pdm14 / tr14_zero
-        mdi = 100 * mdm14 / tr14_zero
+        pdi = 100 * pdm14 / tr14.replace(0, np.nan)
+        mdi = 100 * mdm14 / tr14.replace(0, np.nan)
         dx  = 100 * abs(pdi - mdi) / (pdi + mdi).replace(0, np.nan)
         adx = dx.rolling(period).mean()
 
         return round(float(adx.iloc[-1]), 2)
 
     def _get_max_sl_dist(self) -> float:
-        """Pair-specific maximum SL distance (price units)."""
+        """
+        Pair-specific maximum SL distance (price units).
+
+        GOLD: $10 → $20
+        ──────────────────────────────────────────────────
+        GOLD 1h ATR ≈ $8-12. කලින් $10 cap = ATR 100% = noise hit.
+        $20 cap = ATR 50% = breathing room, less noise-SL.
+        0.01 Troy Oz × $20 = $0.20 max loss per signal.
+        """
         sym = self.symbol.upper()
         if "JPY"  in sym:                  return 1.00
-        if "GOLD" in sym or "XAU" in sym:  return 10.0
+        if "GOLD" in sym or "XAU" in sym:  return 20.0   # $10 → $20
         if "BTC"  in sym:                  return 400.0
         return 0.0100
 
@@ -257,16 +263,14 @@ class ForexAnalyzer:
             )
 
         # ── 3. ADX FILTER — Ranging Market Reject ───────────────────────────
+        # ADX < 25 = market ranging, no clear trend → signal unreliable
+        # ADX compute: indicators ටිකක් load කරන්න ඕන, ඒ නිසා ටිකක් කලින් compute
         try:
             adx_val = self._adx()
-            if adx_val is None or np.isnan(adx_val):
-                adx_val = 30.0
-        except Exception as e:
-            # Log error but allow signal (fail-open) – you can change to fail-closed if needed
-            print(f"⚠️ ADX compute error for {self.symbol}: {e}")
-            adx_val = 30.0
+        except Exception:
+            adx_val = 30.0  # compute fail නම් pass කරනවා
 
-        ADX_MIN = 20  # calibrated threshold
+        ADX_MIN = 20  # 20 = calibrated threshold (rolling sum method)
         if adx_val < ADX_MIN:
             return _empty_result(
                 self.symbol, price,
@@ -335,21 +339,31 @@ class ForexAnalyzer:
         elif rsi_now > 60:
             sell_score += 1; sell_why.append(f"RSI {rsi_now} ❌ Overbought")
         elif 40 <= rsi_now <= 50 and rsi_rising:
+            # ── RSI zone expanded: 47 → 50 ──────────────────────────────────
+            # RSI 48-50 rising = bullish momentum building (previously dead zone)
             buy_score += 1;  buy_why.append(f"RSI {rsi_now} ✅ Rising from low")
         elif 50 <= rsi_now <= 60 and rsi_falling:
+            # ── RSI zone expanded: 53 → 50 ──────────────────────────────────
+            # RSI 50-52 falling = bearish momentum building (previously dead zone)
             sell_score += 1; sell_why.append(f"RSI {rsi_now} ❌ Falling from high")
 
         # 4. MACD — histogram direction + zero line confirmation
+        # macd_v > 0  = macro bullish (price momentum positive)
+        # macd_v < 0  = macro bearish (price momentum negative)
         macd_bullish_macro = macd_v > 0
         macd_bearish_macro = macd_v < 0
 
         if macd_v > sig_v and hist_now > hist_pre and macd_bullish_macro:
+            # Histogram expanding + MACD above zero = strong BUY
             buy_score += 1;  buy_why.append("MACD ✅ Bullish + above zero")
         elif macd_v > sig_v and hist_now > hist_pre:
+            # Histogram expanding but MACD below zero = weak recovery, still BUY
             buy_score += 1;  buy_why.append("MACD ✅ Bullish momentum")
         elif macd_v < sig_v and hist_now < hist_pre and macd_bearish_macro:
+            # Histogram contracting + MACD below zero = strong SELL
             sell_score += 1; sell_why.append("MACD ❌ Bearish + below zero")
         elif macd_v < sig_v and hist_now < hist_pre:
+            # Histogram contracting but MACD above zero = weak pullback
             sell_score += 1; sell_why.append("MACD ❌ Bearish momentum")
 
         # 5. Bollinger Bands
@@ -375,10 +389,12 @@ class ForexAnalyzer:
         elif p < p1 < p2:
             sell_score += 1; sell_why.append("Momentum ❌ 3 bear candles")
 
-        # ── MACRO MOMENTUM CHECK (20 candles / ~20 hours) ────────────────────
+        # ── MACRO MOMENTUM CHECK ────────────────────────────────────────────
+        # price vs 20 candles ago — macro direction
+        # 20 candles ago price ලබා ගැනීම
         p20 = round(float(self.df["Close"].iloc[-21]), 5) if len(self.df) > 21 else p
-        macro_bullish = p > p20
-        macro_bearish = p < p20
+        macro_bullish = p > p20   # 20h ago ට වඩා price ඉහළ = macro upward
+        macro_bearish = p < p20   # 20h ago ට වඩා price පහළ = macro downward
 
         # ── Option B: RSI/BB mandatory ───────────────────────────────────────
         buy_rsi_bb  = any("RSI" in r or "BB" in r for r in buy_why)
@@ -389,13 +405,15 @@ class ForexAnalyzer:
 
         # ── DIRECTION ────────────────────────────────────────────────────────
         if (buy_score >= min_score and buy_score > sell_score
-                and buy_rsi_bb and ema200_bullish and macro_bullish):
+                and buy_rsi_bb and ema200_bullish
+                and macro_bullish):   # ← NEW: 20h macro trend bullish
             direction = "BUY"
             reasons   = buy_why
             strength  = round((buy_score / 6) * 100)
 
         elif (sell_score >= min_score and sell_score > buy_score
-                and sell_rsi_bb and not ema200_bullish and macro_bearish):
+                and sell_rsi_bb and not ema200_bullish
+                and macro_bearish):   # ← NEW: 20h macro trend bearish
             direction = "SELL"
             reasons   = sell_why
             strength  = round((sell_score / 6) * 100)
