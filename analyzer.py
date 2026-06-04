@@ -32,7 +32,6 @@ from news_filter import check_news_conflict
 SIGNAL_VALID_MINUTES = 3
 
 # ── Volatile pairs — higher MIN_SCORE required ───────────────────────────────
-# GOLD, BTCUSD: ATR ලොකු, false signals ගොඩාක් — 5/6 mandatory
 VOLATILE_PAIRS     = {"GOLD", "XAUUSD", "BTCUSD"}
 VOLATILE_MIN_SCORE = 5
 
@@ -132,6 +131,7 @@ def _empty_result(symbol: str, price: float, reason: str,
         "ema200":        None,
         "macd":          None,
         "atr":           None,
+        "adx":           None,
         "stop_loss":     None,
         "take_profit1":  None,
         "take_profit2":  None,
@@ -179,6 +179,51 @@ class ForexAnalyzer:
         ], axis=1).max(axis=1)
         return tr.ewm(span=ATR_PERIOD, adjust=False).mean()
 
+    def _adx(self, period: int = 14) -> float:
+        """
+        ADX (Average Directional Index) — trend strength measure.
+        ADX > 20 = trending  ✅ signal reliable
+        ADX < 20 = ranging   ⛔ signal unreliable
+
+        Rolling sum method (standard, pandas 3.0 safe).
+        np.where use කරනවා — chained assignment නෑ.
+        """
+        h = self.df["High"]
+        l = self.df["Low"]
+        c = self.df["Close"]
+
+        tr = pd.concat([
+            h - l,
+            (h - c.shift()).abs(),
+            (l - c.shift()).abs()
+        ], axis=1).max(axis=1)
+
+        up   = h.diff()
+        down = -l.diff()
+
+        # np.where — FutureWarning free, pandas 3.0 safe
+        pdm = pd.Series(
+            np.where((up > down) & (up > 0), up, 0.0),
+            index=self.df.index
+        )
+        mdm = pd.Series(
+            np.where((down > up) & (down > 0), down, 0.0),
+            index=self.df.index
+        )
+
+        tr14  = tr.rolling(period).sum()
+        pdm14 = pdm.rolling(period).sum()
+        mdm14 = mdm.rolling(period).sum()
+
+        # Avoid division by zero
+        tr14_zero = tr14.replace(0, np.nan)
+        pdi = 100 * pdm14 / tr14_zero
+        mdi = 100 * mdm14 / tr14_zero
+        dx  = 100 * abs(pdi - mdi) / (pdi + mdi).replace(0, np.nan)
+        adx = dx.rolling(period).mean()
+
+        return round(float(adx.iloc[-1]), 2)
+
     def _get_max_sl_dist(self) -> float:
         """Pair-specific maximum SL distance (price units)."""
         sym = self.symbol.upper()
@@ -211,7 +256,25 @@ class ForexAnalyzer:
                 news_blocked=True,
             )
 
-        # ── 3. PAIR-SPECIFIC MIN_SCORE ───────────────────────────────────────
+        # ── 3. ADX FILTER — Ranging Market Reject ───────────────────────────
+        try:
+            adx_val = self._adx()
+            if adx_val is None or np.isnan(adx_val):
+                adx_val = 30.0
+        except Exception as e:
+            # Log error but allow signal (fail-open) – you can change to fail-closed if needed
+            print(f"⚠️ ADX compute error for {self.symbol}: {e}")
+            adx_val = 30.0
+
+        ADX_MIN = 20  # calibrated threshold
+        if adx_val < ADX_MIN:
+            return _empty_result(
+                self.symbol, price,
+                f"⚠️ ADX {adx_val} < {ADX_MIN} — ranging market, skip",
+                session_ok=True, session_name=session_name,
+            )
+
+        # ── 4. PAIR-SPECIFIC MIN_SCORE ───────────────────────────────────────
         min_score = VOLATILE_MIN_SCORE if sym in VOLATILE_PAIRS else MIN_SCORE
 
         # ── INDICATORS ───────────────────────────────────────────────────────
@@ -272,17 +335,20 @@ class ForexAnalyzer:
         elif rsi_now > 60:
             sell_score += 1; sell_why.append(f"RSI {rsi_now} ❌ Overbought")
         elif 40 <= rsi_now <= 50 and rsi_rising:
-            # ── RSI zone expanded: 47 → 50 ──────────────────────────────────
-            # RSI 48-50 rising = bullish momentum building (previously dead zone)
             buy_score += 1;  buy_why.append(f"RSI {rsi_now} ✅ Rising from low")
         elif 50 <= rsi_now <= 60 and rsi_falling:
-            # ── RSI zone expanded: 53 → 50 ──────────────────────────────────
-            # RSI 50-52 falling = bearish momentum building (previously dead zone)
             sell_score += 1; sell_why.append(f"RSI {rsi_now} ❌ Falling from high")
 
-        # 4. MACD
-        if macd_v > sig_v and hist_now > hist_pre:
+        # 4. MACD — histogram direction + zero line confirmation
+        macd_bullish_macro = macd_v > 0
+        macd_bearish_macro = macd_v < 0
+
+        if macd_v > sig_v and hist_now > hist_pre and macd_bullish_macro:
+            buy_score += 1;  buy_why.append("MACD ✅ Bullish + above zero")
+        elif macd_v > sig_v and hist_now > hist_pre:
             buy_score += 1;  buy_why.append("MACD ✅ Bullish momentum")
+        elif macd_v < sig_v and hist_now < hist_pre and macd_bearish_macro:
+            sell_score += 1; sell_why.append("MACD ❌ Bearish + below zero")
         elif macd_v < sig_v and hist_now < hist_pre:
             sell_score += 1; sell_why.append("MACD ❌ Bearish momentum")
 
@@ -309,6 +375,11 @@ class ForexAnalyzer:
         elif p < p1 < p2:
             sell_score += 1; sell_why.append("Momentum ❌ 3 bear candles")
 
+        # ── MACRO MOMENTUM CHECK (20 candles / ~20 hours) ────────────────────
+        p20 = round(float(self.df["Close"].iloc[-21]), 5) if len(self.df) > 21 else p
+        macro_bullish = p > p20
+        macro_bearish = p < p20
+
         # ── Option B: RSI/BB mandatory ───────────────────────────────────────
         buy_rsi_bb  = any("RSI" in r or "BB" in r for r in buy_why)
         sell_rsi_bb = any("RSI" in r or "BB" in r for r in sell_why)
@@ -318,13 +389,13 @@ class ForexAnalyzer:
 
         # ── DIRECTION ────────────────────────────────────────────────────────
         if (buy_score >= min_score and buy_score > sell_score
-                and buy_rsi_bb and ema200_bullish):
+                and buy_rsi_bb and ema200_bullish and macro_bullish):
             direction = "BUY"
             reasons   = buy_why
             strength  = round((buy_score / 6) * 100)
 
         elif (sell_score >= min_score and sell_score > buy_score
-                and sell_rsi_bb and not ema200_bullish):
+                and sell_rsi_bb and not ema200_bullish and macro_bearish):
             direction = "SELL"
             reasons   = sell_why
             strength  = round((sell_score / 6) * 100)
@@ -339,11 +410,15 @@ class ForexAnalyzer:
                     neutral_reasons.append("⚠️ RSI/BB confirmation නෑ — skip")
                 if not ema200_bullish:
                     neutral_reasons.append("⚠️ EMA200 downtrend — BUY conflict")
+                if not macro_bullish:
+                    neutral_reasons.append("⚠️ Macro downtrend (20h) — BUY blocked")
             elif sell_score >= min_score and sell_score > buy_score:
                 if not sell_rsi_bb:
                     neutral_reasons.append("⚠️ RSI/BB confirmation නෑ — skip")
                 if ema200_bullish:
                     neutral_reasons.append("⚠️ EMA200 uptrend — SELL conflict")
+                if not macro_bearish:
+                    neutral_reasons.append("⚠️ Macro uptrend (20h) — SELL blocked")
             elif sym in VOLATILE_PAIRS and max(buy_score, sell_score) == 4:
                 neutral_reasons.append(f"⚠️ {sym} 4/6 — volatile pair, 5/6 required")
             else:
@@ -393,6 +468,7 @@ class ForexAnalyzer:
             "ema200":        ema200_v,
             "macd":          macd_v,
             "atr":           atr_v,
+            "adx":           adx_val,
             "stop_loss":     sl,
             "take_profit1":  tp1,
             "take_profit2":  tp2,
