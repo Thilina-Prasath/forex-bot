@@ -222,19 +222,23 @@ class ForexAnalyzer:
 
         return round(float(adx.iloc[-1]), 2)
 
-    def _get_max_sl_dist(self) -> float:
+    def _get_min_sl_dist(self) -> float:
         """
-        Pair-specific maximum SL distance (price units).
-
-        GOLD: $10 → $20
-        ──────────────────────────────────────────────────
-        GOLD 1h ATR ≈ $8-12. කලින් $10 cap = ATR 100% = noise hit.
-        $20 cap = ATR 50% = breathing room, less noise-SL.
-        0.01 Troy Oz × $20 = $0.20 max loss per signal.
+        Minimum SL distance — noise hit avoid.
+        ATR too low වුණොත් (quiet market) SL minimum enforce කරනවා.
+        USDJPY 4.5 pip ATR × 1.5 = 6.7 pip SL = noise hit example.
         """
         sym = self.symbol.upper()
+        if "JPY"  in sym:                  return 0.10   # 10 pips minimum
+        if "GOLD" in sym or "XAU" in sym:  return 5.0    # $5 minimum
+        if "BTC"  in sym:                  return 100.0
+        return 0.0010                                     # 10 pips minimum
+
+    def _get_max_sl_dist(self) -> float:
+        """Maximum SL distance — position size control."""
+        sym = self.symbol.upper()
         if "JPY"  in sym:                  return 1.00
-        if "GOLD" in sym or "XAU" in sym:  return 20.0   # $10 → $20
+        if "GOLD" in sym or "XAU" in sym:  return 20.0
         if "BTC"  in sym:                  return 400.0
         return 0.0100
 
@@ -262,6 +266,28 @@ class ForexAnalyzer:
                 news_blocked=True,
             )
 
+        # ── 3a. LOW ATR FILTER — Quiet market / noise SL risk ──────────────
+        # ATR too low = SL will be too tight = noise hit likely
+        # USDJPY ATR 4.5 pips example: 1.5 × 4.5 = 6.7 pip SL → instant loss
+        try:
+            atr_check = self._atr()
+            atr_now   = float(atr_check.iloc[-1])
+            min_atr   = {"JPY": 0.08, "GOLD": 4.0, "BTC": 200.0}
+            default_min_atr = 0.0005
+            sym_min_atr = default_min_atr
+            for key, val in min_atr.items():
+                if key in sym:
+                    sym_min_atr = val
+                    break
+            if atr_now < sym_min_atr:
+                return _empty_result(
+                    self.symbol, price,
+                    f"⚠️ ATR {atr_now:.4f} too low — quiet market, tight SL risk",
+                    session_ok=True, session_name=session_name,
+                )
+        except Exception:
+            pass
+
         # ── 3. ADX FILTER — Ranging Market Reject ───────────────────────────
         # ADX < 25 = market ranging, no clear trend → signal unreliable
         # ADX compute: indicators ටිකක් load කරන්න ඕන, ඒ නිසා ටිකක් කලින් compute
@@ -270,7 +296,7 @@ class ForexAnalyzer:
         except Exception:
             adx_val = 30.0  # compute fail නම් pass කරනවා
 
-        ADX_MIN = 20  # 20 = calibrated threshold (rolling sum method)
+        ADX_MIN = 25  # 25 = calibrated threshold (rolling sum method)
         if adx_val < ADX_MIN:
             return _empty_result(
                 self.symbol, price,
@@ -397,8 +423,8 @@ class ForexAnalyzer:
         macro_bearish = p < p20   # 20h ago ට වඩා price පහළ = macro downward
 
         # ── Option B: RSI/BB mandatory ───────────────────────────────────────
-        buy_rsi_bb  = any("RSI" in r or "BB" in r for r in buy_why)
-        sell_rsi_bb = any("RSI" in r or "BB" in r for r in sell_why)
+        buy_rsi_bb  = any("RSI" in r for r in buy_why) and any("BB" in r for r in buy_why)
+        sell_rsi_bb = any("RSI" in r for r in sell_why) and any("BB" in r for r in sell_why)
 
         # ── Option C: EMA200 conflict reject ─────────────────────────────────
         ema200_bullish = p > ema200_v
@@ -448,7 +474,11 @@ class ForexAnalyzer:
         sl = tp1 = tp2 = rr = None
         if direction in ("BUY", "SELL"):
             sl_dist   = atr_v * ATR_SL_MULTI
-            actual_sl = min(sl_dist, self._get_max_sl_dist())
+            # min SL enforce — noise hit avoid (USDJPY 6.7 pip SL fix)
+            actual_sl = max(
+                min(sl_dist, self._get_max_sl_dist()),
+                self._get_min_sl_dist()
+            )
             ratio     = ATR_TP_MULTI / ATR_SL_MULTI
             actual_tp = actual_sl * ratio
 

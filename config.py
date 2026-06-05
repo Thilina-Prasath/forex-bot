@@ -42,14 +42,14 @@ EMA_FAST       = 20
 EMA_SLOW       = 50
 EMA_TREND      = 200
 ATR_PERIOD     = 14
-ATR_SL_MULTI   = 1.5
+ATR_SL_MULTI   = 2.0 
 ATR_TP_MULTI   = 2.5
 
 # ── Signal Filter ────────────────────────────────────────────────────────────
 # Analyzer direction decision: score >= MIN_SCORE
 # cron_run quality gate:       score >= QUALITY_MIN_SCORE (4)
 # GOLD/BTCUSD volatile:        score >= 5 (in analyzer.py)
-MIN_SCORE = 3
+MIN_SCORE = 4
 
 # ── Schedule ─────────────────────────────────────────────────────────────────
 SIGNAL_TIME_UTC = "00:05"
