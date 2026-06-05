@@ -423,19 +423,18 @@ class ForexAnalyzer:
         macro_bearish = p < p20   # 20h ago ට වඩා price පහළ = macro downward
 
         # ── Option B: RSI/BB mandatory ───────────────────────────────────────
-        buy_rsi_bb  = any("RSI" in r for r in buy_why) and any("BB" in r for r in buy_why)
-        sell_rsi_bb = any("RSI" in r for r in sell_why) and any("BB" in r for r in sell_why)
+        buy_rsi_bb  = any("RSI" in r for r in buy_why) or any("BB" in r for r in buy_why)
+        sell_rsi_bb = any("RSI" in r for r in sell_why) or any("BB" in r for r in sell_why)
 
         # ── Option C: EMA200 conflict reject ─────────────────────────────────
         ema200_bullish = p > ema200_v
 
         # ── DIRECTION ────────────────────────────────────────────────────────
+        buy_rsi_bb_required = (buy_score == 4)  # score 5 හෝ 6 නම් අවශ්‍ය නැහැ
         if (buy_score >= min_score and buy_score > sell_score
-                and buy_rsi_bb and ema200_bullish
-                and macro_bullish):   # ← NEW: 20h macro trend bullish
+            and (not buy_rsi_bb_required or buy_rsi_bb)   # 5/6,6/6 සඳහා auto-pass
+            and ema200_bullish and macro_bullish):
             direction = "BUY"
-            reasons   = buy_why
-            strength  = round((buy_score / 6) * 100)
 
         elif (sell_score >= min_score and sell_score > buy_score
                 and sell_rsi_bb and not ema200_bullish
