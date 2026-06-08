@@ -272,7 +272,7 @@ class ForexAnalyzer:
         try:
             atr_check = self._atr()
             atr_now   = float(atr_check.iloc[-1])
-            min_atr   = {"JPY": 0.08, "GOLD": 4.0, "BTC": 200.0}
+            min_atr   = {"JPY": 0.06, "GOLD": 2.0, "BTC": 150.0}
             default_min_atr = 0.0005
             sym_min_atr = default_min_atr
             for key, val in min_atr.items():
@@ -296,7 +296,7 @@ class ForexAnalyzer:
         except Exception:
             adx_val = 30.0  # compute fail නම් pass කරනවා
 
-        ADX_MIN = 25  # 25 = calibrated threshold (rolling sum method)
+        ADX_MIN = 20  # 20 = calibrated threshold (rolling sum method)
         if adx_val < ADX_MIN:
             return _empty_result(
                 self.symbol, price,
@@ -423,18 +423,19 @@ class ForexAnalyzer:
         macro_bearish = p < p20   # 20h ago ට වඩා price පහළ = macro downward
 
         # ── Option B: RSI/BB mandatory ───────────────────────────────────────
-        buy_rsi_bb  = any("RSI" in r for r in buy_why) or any("BB" in r for r in buy_why)
-        sell_rsi_bb = any("RSI" in r for r in sell_why) or any("BB" in r for r in sell_why)
+        buy_rsi_bb  = any("RSI" in r or "BB" in r for r in buy_why)
+        sell_rsi_bb = any("RSI" in r or "BB" in r for r in sell_why)
 
         # ── Option C: EMA200 conflict reject ─────────────────────────────────
         ema200_bullish = p > ema200_v
 
         # ── DIRECTION ────────────────────────────────────────────────────────
-        buy_rsi_bb_required = (buy_score == 4)  # score 5 හෝ 6 නම් අවශ්‍ය නැහැ
         if (buy_score >= min_score and buy_score > sell_score
-            and (not buy_rsi_bb_required or buy_rsi_bb)   # 5/6,6/6 සඳහා auto-pass
-            and ema200_bullish and macro_bullish):
+                and buy_rsi_bb and ema200_bullish
+                and macro_bullish):   # ← NEW: 20h macro trend bullish
             direction = "BUY"
+            reasons   = buy_why
+            strength  = round((buy_score / 6) * 100)
 
         elif (sell_score >= min_score and sell_score > buy_score
                 and sell_rsi_bb and not ema200_bullish
