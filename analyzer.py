@@ -2,19 +2,11 @@
 Indicators (6 points max):
   1. EMA200    — Long-term trend
   2. EMA 20/50 — Medium trend crossover
-  3. RSI       — Refined zones (no half points)
+  3. RSI       — Refined zones
   4. MACD      — Histogram + zero-line
   5. Bollinger Bands — Band position
   6. Momentum  — 3/4 candle price action
-
-Signal Rules:
-  - BUY/SELL score >= MIN_SCORE → signal candidate
-  - GOLD/BTCUSD → MIN_SCORE 5 (volatile pairs)
-  - RSI OR BB confirmation mandatory (Option B)
-  - EMA200 direction conflict rejected (Option C)
-  - Session filter: Pair-specific sessions only
-  - News filter: High Impact News 30min block
-  - Max SL distance: Pair-specific pip limits
+  + NEWS MOMENTUM OVERRIDE: Catches pullbacks 5-30 mins after High Impact News
 """
 
 import pandas as pd
@@ -28,125 +20,72 @@ from config import (
 )
 from news_filter import check_news_conflict
 
-# ── Signal validity window (minutes) ────────────────────────────────────────
 SIGNAL_VALID_MINUTES = 3
-
-# ── Volatile pairs — higher MIN_SCORE required ───────────────────────────────
-# GOLD, BTCUSD: ATR ලොකු, false signals ගොඩාක් — 5/6 mandatory
 VOLATILE_PAIRS     = {"GOLD", "XAUUSD", "BTCUSD"}
 VOLATILE_MIN_SCORE = 5
 
-# ── Position size warnings ───────────────────────────────────────────────────
 POSITION_SIZE_WARNINGS = {
-    "GOLD":   "⚠️ GOLD — Max 0.01 Troy Oz only! (0.01oz x $20 SL = $0.20 max loss)",
-    "XAUUSD": "⚠️ GOLD — Max 0.01 Troy Oz only! (0.01oz x $20 SL = $0.20 max loss)",
+    "GOLD":   "⚠️ GOLD — Max 0.01 Troy Oz only! (News trades carry high risk)",
+    "XAUUSD": "⚠️ GOLD — Max 0.01 Troy Oz only! (News trades carry high risk)",
     "BTCUSD": "⚠️ BTC  — Max 0.001 lot use කරන්න!",
 }
 
-# ── Session config ───────────────────────────────────────────────────────────
-SESSION_RANGES = {
-    "sydney": None,
-    "tokyo":  (0,  9),
-    "london": (8,  17),
-    "ny":     (13, 22),
-}
+SESSION_RANGES = {"sydney": None, "tokyo": (0, 9), "london": (8, 17), "ny": (13, 22)}
 
 PAIR_ACTIVE_SESSIONS = {
-    "AUDUSD": ["sydney", "tokyo", "london"],
-    "AUDJPY": ["sydney", "tokyo"],
-    "AUDNZD": ["sydney", "tokyo"],
-    "NZDUSD": ["sydney", "tokyo"],
-    "USDJPY": ["tokyo",  "london"],
-    "EURJPY": ["tokyo",  "london"],
-    "GBPJPY": ["tokyo",  "london"],
-    "EURUSD": ["london", "ny"],
-    "GBPUSD": ["london", "ny"],
-    "EURGBP": ["london", "ny"],
-    "USDCHF": ["london", "ny"],
-    "USDCAD": ["london", "ny"],
-    "GOLD":   ["london", "ny"],
-    "XAUUSD": ["london", "ny"],
+    "AUDUSD": ["sydney", "tokyo", "london"], "AUDJPY": ["sydney", "tokyo"],
+    "AUDNZD": ["sydney", "tokyo"], "NZDUSD": ["sydney", "tokyo"],
+    "USDJPY": ["tokyo",  "london"], "EURJPY": ["tokyo",  "london"],
+    "GBPJPY": ["tokyo",  "london"], "EURUSD": ["london", "ny"],
+    "GBPUSD": ["london", "ny"], "EURGBP": ["london", "ny"],
+    "USDCHF": ["london", "ny"], "USDCAD": ["london", "ny"],
+    "GOLD":   ["london", "ny"], "XAUUSD": ["london", "ny"],
     "BTCUSD": ["london", "ny"],
 }
 
-SESSION_LABELS = {
-    "sydney": "Sydney 🇦🇺",
-    "tokyo":  "Tokyo 🇯🇵",
-    "london": "London 🇬🇧",
-    "ny":     "New York 🇺🇸",
-}
-
+SESSION_LABELS = {"sydney": "Sydney 🇦🇺", "tokyo": "Tokyo 🇯🇵", "london": "London 🇬🇧", "ny": "New York 🇺🇸"}
 
 def _in_session(session: str, hour_utc: int) -> bool:
-    if session == "sydney":
-        return hour_utc >= 22 or hour_utc < 7
+    if session == "sydney": return hour_utc >= 22 or hour_utc < 7
     start, end = SESSION_RANGES[session]
     return start <= hour_utc < end
 
-
 def get_session_status(symbol: str, dt_utc: datetime = None) -> tuple[bool, str]:
-    if dt_utc is None:
-        dt_utc = datetime.now(timezone.utc)
+    if dt_utc is None: dt_utc = datetime.now(timezone.utc)
     hour = dt_utc.hour
     sym  = symbol.upper().replace("XAUUSD", "GOLD")
 
     active_sessions = PAIR_ACTIVE_SESSIONS.get(sym, ["london", "ny"])
     active_now = [s for s in active_sessions if _in_session(s, hour)]
 
-    if active_now:
-        labels = " + ".join(SESSION_LABELS[s] for s in active_now)
-        return True, labels
+    if active_now: return True, " + ".join(SESSION_LABELS[s] for s in active_now)
 
     next_session  = active_sessions[0]
     next_utc_hour = 22 if next_session == "sydney" else SESSION_RANGES[next_session][0]
     next_open     = dt_utc.replace(hour=next_utc_hour, minute=0, second=0, microsecond=0)
-    if next_open <= dt_utc:
-        next_open += timedelta(days=1)
+    if next_open <= dt_utc: next_open += timedelta(days=1)
 
-    wait   = next_open - dt_utc
+    wait = next_open - dt_utc
     wait_h = int(wait.total_seconds() // 3600)
     wait_m = int((wait.total_seconds() % 3600) // 60)
     return False, f"Off-session ⏸️  ({SESSION_LABELS[next_session]} opens in {wait_h}h {wait_m}m)"
 
-
-def _empty_result(symbol: str, price: float, reason: str,
-                  session_ok: bool, session_name: str,
-                  news_blocked: bool = False) -> dict:
-    """Session/News block වූ විට return කරන standard dict."""
+def _empty_result(symbol: str, price: float, reason: str, session_ok: bool, session_name: str, news_blocked: bool = False) -> dict:
     return {
-        "symbol":        symbol,
-        "price":         price,
-        "direction":     "NEUTRAL",
-        "strength":      0,
-        "buy_score":     0,
-        "sell_score":    0,
-        "reasons":       [reason],
-        "session":       session_name,
-        "session_ok":    session_ok,
-        "news_blocked":  news_blocked,
-        "valid_until":   None,
-        "pos_size_warn": None,
-        "rsi":           None,
-        "ema20":         None,
-        "ema50":         None,
-        "ema200":        None,
-        "macd":          None,
-        "atr":           None,
-        "stop_loss":     None,
-        "take_profit1":  None,
-        "take_profit2":  None,
-        "risk_reward":   None,
+        "symbol": symbol, "price": price, "direction": "NEUTRAL",
+        "strength": 0, "buy_score": 0, "sell_score": 0, "reasons": [reason],
+        "session": session_name, "session_ok": session_ok, "news_blocked": news_blocked,
+        "valid_until": None, "pos_size_warn": None, "rsi": None, "ema20": None,
+        "ema50": None, "ema200": None, "macd": None, "atr": None, "stop_loss": None,
+        "take_profit1": None, "take_profit2": None, "risk_reward": None,
     }
 
-
 class ForexAnalyzer:
-
     def __init__(self, symbol: str, df: pd.DataFrame):
         self.symbol = symbol
         self.df     = df.copy()
 
-    def _ema(self, period):
-        return self.df["Close"].ewm(span=period, adjust=False).mean()
+    def _ema(self, period): return self.df["Close"].ewm(span=period, adjust=False).mean()
 
     def _rsi(self):
         delta = self.df["Close"].diff()
@@ -162,8 +101,7 @@ class ForexAnalyzer:
         e26  = self.df["Close"].ewm(span=26, adjust=False).mean()
         line = e12 - e26
         sig  = line.ewm(span=9, adjust=False).mean()
-        hist = line - sig
-        return line, sig, hist
+        return line, sig, line - sig
 
     def _bollinger(self, period=20, std=2.0):
         sma = self.df["Close"].rolling(window=period).mean()
@@ -172,74 +110,32 @@ class ForexAnalyzer:
 
     def _atr(self):
         h, l, c = self.df["High"], self.df["Low"], self.df["Close"]
-        tr = pd.concat([
-            h - l,
-            (h - c.shift()).abs(),
-            (l - c.shift()).abs()
-        ], axis=1).max(axis=1)
+        tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
         return tr.ewm(span=ATR_PERIOD, adjust=False).mean()
 
     def _adx(self, period: int = 14) -> float:
-        """
-        ADX (Average Directional Index) — trend strength measure.
-        ADX > 20 = trending  ✅ signal reliable
-        ADX < 20 = ranging   ⛔ signal unreliable
-
-        Rolling sum method (standard, pandas 3.0 safe).
-        np.where use කරනවා — chained assignment නෑ.
-        """
-        h = self.df["High"]
-        l = self.df["Low"]
-        c = self.df["Close"]
-
-        tr = pd.concat([
-            h - l,
-            (h - c.shift()).abs(),
-            (l - c.shift()).abs()
-        ], axis=1).max(axis=1)
-
-        up   = h.diff()
-        down = -l.diff()
-
-        # np.where — FutureWarning free, pandas 3.0 safe
-        pdm = pd.Series(
-            np.where((up > down) & (up > 0), up, 0.0),
-            index=self.df.index
-        )
-        mdm = pd.Series(
-            np.where((down > up) & (down > 0), down, 0.0),
-            index=self.df.index
-        )
-
-        tr14  = tr.rolling(period).sum()
-        pdm14 = pdm.rolling(period).sum()
-        mdm14 = mdm.rolling(period).sum()
-
-        pdi = 100 * pdm14 / tr14.replace(0, np.nan)
-        mdi = 100 * mdm14 / tr14.replace(0, np.nan)
-        dx  = 100 * abs(pdi - mdi) / (pdi + mdi).replace(0, np.nan)
-        adx = dx.rolling(period).mean()
-
-        return round(float(adx.iloc[-1]), 2)
+        h, l, c = self.df["High"], self.df["Low"], self.df["Close"]
+        tr = pd.concat([h - l, (h - c.shift()).abs(), (l - c.shift()).abs()], axis=1).max(axis=1)
+        up, down = h.diff(), -l.diff()
+        pdm = pd.Series(np.where((up > down) & (up > 0), up, 0.0), index=self.df.index)
+        mdm = pd.Series(np.where((down > up) & (down > 0), down, 0.0), index=self.df.index)
+        tr14, pdm14, mdm14 = tr.rolling(period).sum(), pdm.rolling(period).sum(), mdm.rolling(period).sum()
+        pdi, mdi = 100 * pdm14 / tr14.replace(0, np.nan), 100 * mdm14 / tr14.replace(0, np.nan)
+        dx = 100 * abs(pdi - mdi) / (pdi + mdi).replace(0, np.nan)
+        return round(float(dx.rolling(period).mean().iloc[-1]), 2)
 
     def _get_min_sl_dist(self) -> float:
-        """
-        Minimum SL distance — noise hit avoid.
-        ATR too low වුණොත් (quiet market) SL minimum enforce කරනවා.
-        USDJPY 4.5 pip ATR × 1.5 = 6.7 pip SL = noise hit example.
-        """
         sym = self.symbol.upper()
-        if "JPY"  in sym:                  return 0.10   # 10 pips minimum
-        if "GOLD" in sym or "XAU" in sym:  return 5.0    # $5 minimum
-        if "BTC"  in sym:                  return 100.0
-        return 0.0010                                     # 10 pips minimum
+        if "JPY"  in sym: return 0.10
+        if "GOLD" in sym or "XAU" in sym: return 5.0
+        if "BTC"  in sym: return 100.0
+        return 0.0010
 
     def _get_max_sl_dist(self) -> float:
-        """Maximum SL distance — position size control."""
         sym = self.symbol.upper()
-        if "JPY"  in sym:                  return 1.00
-        if "GOLD" in sym or "XAU" in sym:  return 20.0
-        if "BTC"  in sym:                  return 400.0
+        if "JPY"  in sym: return 1.00
+        if "GOLD" in sym or "XAU" in sym: return 20.0
+        if "BTC"  in sym: return 400.0
         return 0.0100
 
     def generate(self) -> dict:
@@ -247,67 +143,26 @@ class ForexAnalyzer:
         price   = round(float(self.df["Close"].iloc[-1]), 5)
         sym     = self.symbol.upper()
 
-        # ── 1. SESSION FILTER ────────────────────────────────────────────────
+        # ── 1. SESSION & NEWS FILTER ─────────────────────────────────────────
         session_ok, session_name = get_session_status(self.symbol, now_utc)
         if not session_ok:
-            return _empty_result(
-                self.symbol, price,
-                f"⏸️ {session_name}",
-                session_ok=False, session_name=session_name,
-            )
+            return _empty_result(self.symbol, price, f"⏸️ {session_name}", False, session_name)
 
-        # ── 2. NEWS FILTER ───────────────────────────────────────────────────
-        has_news, news_title = check_news_conflict(self.symbol, buffer_minutes=30)
-        if has_news:
-            return _empty_result(
-                self.symbol, price,
-                f"🚨 News blocked: {news_title}",
-                session_ok=True, session_name=session_name,
-                news_blocked=True,
-            )
+        news_status, news_title = check_news_conflict(self.symbol)
+        is_news_momentum = False
 
-        # ── 3a. LOW ATR FILTER — Quiet market / noise SL risk ──────────────
-        # ATR too low = SL will be too tight = noise hit likely
-        # USDJPY ATR 4.5 pips example: 1.5 × 4.5 = 6.7 pip SL → instant loss
-        try:
-            atr_check = self._atr()
-            atr_now   = float(atr_check.iloc[-1])
-            min_atr   = {"JPY": 0.06, "GOLD": 2.0, "BTC": 150.0}
-            default_min_atr = 0.0005
-            sym_min_atr = default_min_atr
-            for key, val in min_atr.items():
-                if key in sym:
-                    sym_min_atr = val
-                    break
-            if atr_now < sym_min_atr:
-                return _empty_result(
-                    self.symbol, price,
-                    f"⚠️ ATR {atr_now:.4f} too low — quiet market, tight SL risk",
-                    session_ok=True, session_name=session_name,
-                )
-        except Exception:
-            pass
+        if news_status == "BLOCKED":
+            return _empty_result(self.symbol, price, f"🚨 News Spike Risk: {news_title}", True, session_name, True)
+        elif news_status == "NEWS_MOMENTUM":
+            is_news_momentum = True
 
-        # ── 3. ADX FILTER — Ranging Market Reject ───────────────────────────
-        # ADX < 25 = market ranging, no clear trend → signal unreliable
-        # ADX compute: indicators ටිකක් load කරන්න ඕන, ඒ නිසා ටිකක් කලින් compute
-        try:
-            adx_val = self._adx()
-        except Exception:
-            adx_val = 30.0  # compute fail නම් pass කරනවා
+        # ── 2. BASE INDICATORS ───────────────────────────────────────────────
+        try: adx_val = self._adx()
+        except Exception: adx_val = 30.0
 
-        ADX_MIN = 20  # 20 = calibrated threshold (rolling sum method)
-        if adx_val < ADX_MIN:
-            return _empty_result(
-                self.symbol, price,
-                f"⚠️ ADX {adx_val} < {ADX_MIN} — ranging market, skip",
-                session_ok=True, session_name=session_name,
-            )
+        if not is_news_momentum and adx_val < 20:
+            return _empty_result(self.symbol, price, f"⚠️ ADX {adx_val} < 20 — ranging market", True, session_name)
 
-        # ── 4. PAIR-SPECIFIC MIN_SCORE ───────────────────────────────────────
-        min_score = VOLATILE_MIN_SCORE if sym in VOLATILE_PAIRS else MIN_SCORE
-
-        # ── INDICATORS ───────────────────────────────────────────────────────
         ema20  = self._ema(EMA_FAST)
         ema50  = self._ema(EMA_SLOW)
         ema200 = self._ema(EMA_TREND)
@@ -316,209 +171,117 @@ class ForexAnalyzer:
         bb_up, _, bb_lo = self._bollinger()
         atr    = self._atr()
 
-        c  = self.df["Close"]
-        p  = round(float(c.iloc[-1]), 5)
-        p1 = round(float(c.iloc[-2]), 5)
-        p2 = round(float(c.iloc[-3]), 5)
-        p3 = round(float(c.iloc[-4]), 5)
+        c = self.df["Close"]
+        p, p1, p2, p3 = round(float(c.iloc[-1]), 5), round(float(c.iloc[-2]), 5), round(float(c.iloc[-3]), 5), round(float(c.iloc[-4]), 5)
+        rsi_now, rsi_prev, rsi_prev2 = round(float(rsi.iloc[-1]), 2), round(float(rsi.iloc[-2]), 2), round(float(rsi.iloc[-3]), 2)
+        ema20_v, ema50_v, ema200_v = round(float(ema20.iloc[-1]), 5), round(float(ema50.iloc[-1]), 5), round(float(ema200.iloc[-1]), 5)
+        macd_v, sig_v, hist_now, hist_pre = round(float(macd_l.iloc[-1]), 6), round(float(macd_s.iloc[-1]), 6), round(float(macd_h.iloc[-1]), 6), round(float(macd_h.iloc[-2]), 6)
+        bbu_v, bbl_v, atr_v = round(float(bb_up.iloc[-1]), 5), round(float(bb_lo.iloc[-1]), 5), round(float(atr.iloc[-1]), 5)
 
-        rsi_now   = round(float(rsi.iloc[-1]), 2)
-        rsi_prev  = round(float(rsi.iloc[-2]), 2)
-        rsi_prev2 = round(float(rsi.iloc[-3]), 2)
-
-        ema20_v  = round(float(ema20.iloc[-1]),  5)
-        ema50_v  = round(float(ema50.iloc[-1]),  5)
-        ema200_v = round(float(ema200.iloc[-1]), 5)
-
-        macd_v   = round(float(macd_l.iloc[-1]), 6)
-        sig_v    = round(float(macd_s.iloc[-1]), 6)
-        hist_now = round(float(macd_h.iloc[-1]), 6)
-        hist_pre = round(float(macd_h.iloc[-2]), 6)
-
-        bbu_v = round(float(bb_up.iloc[-1]), 5)
-        bbl_v = round(float(bb_lo.iloc[-1]), 5)
-        atr_v = round(float(atr.iloc[-1]),   5)
-
-        buy_score  = 0
-        sell_score = 0
-        buy_why    = []
-        sell_why   = []
-
-        # 1. EMA200
-        if p > ema200_v:
-            buy_score += 1;  buy_why.append("EMA200 ✅ Uptrend")
-        else:
-            sell_score += 1; sell_why.append("EMA200 ❌ Downtrend")
-
-        # 2. EMA 20/50
-        if ema20_v > ema50_v:
-            buy_score += 1;  buy_why.append("EMA20>50 ✅ Bullish")
-        else:
-            sell_score += 1; sell_why.append("EMA20<50 ❌ Bearish")
-
-        # 3. RSI
-        rsi_rising  = rsi_now > rsi_prev > rsi_prev2
-        rsi_falling = rsi_now < rsi_prev < rsi_prev2
-
-        if rsi_now < 40:
-            buy_score += 1;  buy_why.append(f"RSI {rsi_now} ✅ Oversold")
-        elif rsi_now > 60:
-            sell_score += 1; sell_why.append(f"RSI {rsi_now} ❌ Overbought")
-        elif 40 <= rsi_now <= 50 and rsi_rising:
-            # ── RSI zone expanded: 47 → 50 ──────────────────────────────────
-            # RSI 48-50 rising = bullish momentum building (previously dead zone)
-            buy_score += 1;  buy_why.append(f"RSI {rsi_now} ✅ Rising from low")
-        elif 50 <= rsi_now <= 60 and rsi_falling:
-            # ── RSI zone expanded: 53 → 50 ──────────────────────────────────
-            # RSI 50-52 falling = bearish momentum building (previously dead zone)
-            sell_score += 1; sell_why.append(f"RSI {rsi_now} ❌ Falling from high")
-
-        # 4. MACD — histogram direction + zero line confirmation
-        # macd_v > 0  = macro bullish (price momentum positive)
-        # macd_v < 0  = macro bearish (price momentum negative)
-        macd_bullish_macro = macd_v > 0
-        macd_bearish_macro = macd_v < 0
-
-        if macd_v > sig_v and hist_now > hist_pre and macd_bullish_macro:
-            # Histogram expanding + MACD above zero = strong BUY
-            buy_score += 1;  buy_why.append("MACD ✅ Bullish + above zero")
-        elif macd_v > sig_v and hist_now > hist_pre:
-            # Histogram expanding but MACD below zero = weak recovery, still BUY
-            buy_score += 1;  buy_why.append("MACD ✅ Bullish momentum")
-        elif macd_v < sig_v and hist_now < hist_pre and macd_bearish_macro:
-            # Histogram contracting + MACD below zero = strong SELL
-            sell_score += 1; sell_why.append("MACD ❌ Bearish + below zero")
-        elif macd_v < sig_v and hist_now < hist_pre:
-            # Histogram contracting but MACD above zero = weak pullback
-            sell_score += 1; sell_why.append("MACD ❌ Bearish momentum")
-
-        # 5. Bollinger Bands
-        bb_range = bbu_v - bbl_v
-        bb_pct   = (p - bbl_v) / bb_range if bb_range != 0 else 0.5
-
-        if p <= bbl_v:
-            buy_score += 1;  buy_why.append("BB ✅ Below lower band")
-        elif p >= bbu_v:
-            sell_score += 1; sell_why.append("BB ❌ Above upper band")
-        elif bb_pct < 0.30:
-            buy_score += 1;  buy_why.append("BB ✅ Lower zone")
-        elif bb_pct > 0.70:
-            sell_score += 1; sell_why.append("BB ❌ Upper zone")
-
-        # 6. Momentum
-        if p > p1 > p2 > p3:
-            buy_score += 1;  buy_why.append("Momentum ✅ 4 bull candles")
-        elif p > p1 > p2:
-            buy_score += 1;  buy_why.append("Momentum ✅ 3 bull candles")
-        elif p < p1 < p2 < p3:
-            sell_score += 1; sell_why.append("Momentum ❌ 4 bear candles")
-        elif p < p1 < p2:
-            sell_score += 1; sell_why.append("Momentum ❌ 3 bear candles")
-
-        # ── MACRO MOMENTUM CHECK ────────────────────────────────────────────
-        # price vs 20 candles ago — macro direction
-        # 20 candles ago price ලබා ගැනීම
-        p20 = round(float(self.df["Close"].iloc[-21]), 5) if len(self.df) > 21 else p
-        macro_bullish = p > p20   # 20h ago ට වඩා price ඉහළ = macro upward
-        macro_bearish = p < p20   # 20h ago ට වඩා price පහළ = macro downward
-
-        # ── Option B: RSI/BB mandatory ───────────────────────────────────────
-        buy_rsi_bb  = any("RSI" in r or "BB" in r for r in buy_why)
-        sell_rsi_bb = any("RSI" in r or "BB" in r for r in sell_why)
-
-        # ── Option C: EMA200 conflict reject ─────────────────────────────────
+        # ── 3. NEWS MOMENTUM OVERRIDE LOGIC ──────────────────────────────────
+        news_momentum_buy = False
+        news_momentum_sell = False
         ema200_bullish = p > ema200_v
 
-        # ── DIRECTION ────────────────────────────────────────────────────────
-        if (buy_score >= min_score and buy_score > sell_score
-                and buy_rsi_bb and ema200_bullish
-                and macro_bullish):   # ← NEW: 20h macro trend bullish
+        if is_news_momentum and adx_val >= 30:
+            # Check for EMA20 pullback bounce (Price is within 0.8 ATR of EMA20)
+            price_near_ema20 = abs(p - ema20_v) <= (atr_v * 0.8)
+            
+            if ema200_bullish and price_near_ema20 and p > p1:
+                news_momentum_buy = True
+            elif not ema200_bullish and price_near_ema20 and p < p1:
+                news_momentum_sell = True
+
+        # ── 4. STANDARD LOGIC ────────────────────────────────────────────────
+        buy_score, sell_score = 0, 0
+        buy_why, sell_why = [], []
+        min_score = VOLATILE_MIN_SCORE if sym in VOLATILE_PAIRS else MIN_SCORE
+
+        if p > ema200_v: buy_score += 1; buy_why.append("EMA200 ✅ Uptrend")
+        else: sell_score += 1; sell_why.append("EMA200 ❌ Downtrend")
+
+        if ema20_v > ema50_v: buy_score += 1; buy_why.append("EMA20>50 ✅ Bullish")
+        else: sell_score += 1; sell_why.append("EMA20<50 ❌ Bearish")
+
+        if rsi_now < 40: buy_score += 1; buy_why.append(f"RSI {rsi_now} ✅ Oversold")
+        elif rsi_now > 60: sell_score += 1; sell_why.append(f"RSI {rsi_now} ❌ Overbought")
+        elif 40 <= rsi_now <= 50 and (rsi_now > rsi_prev > rsi_prev2): buy_score += 1; buy_why.append(f"RSI {rsi_now} ✅ Rising from low")
+        elif 50 <= rsi_now <= 60 and (rsi_now < rsi_prev < rsi_prev2): sell_score += 1; sell_why.append(f"RSI {rsi_now} ❌ Falling from high")
+
+        if macd_v > sig_v and hist_now > hist_pre and macd_v > 0: buy_score += 1; buy_why.append("MACD ✅ Bullish + above zero")
+        elif macd_v > sig_v and hist_now > hist_pre: buy_score += 1; buy_why.append("MACD ✅ Bullish momentum")
+        elif macd_v < sig_v and hist_now < hist_pre and macd_v < 0: sell_score += 1; sell_why.append("MACD ❌ Bearish + below zero")
+        elif macd_v < sig_v and hist_now < hist_pre: sell_score += 1; sell_why.append("MACD ❌ Bearish momentum")
+
+        bb_range = bbu_v - bbl_v
+        bb_pct = (p - bbl_v) / bb_range if bb_range != 0 else 0.5
+        if p <= bbl_v: buy_score += 1; buy_why.append("BB ✅ Below lower band")
+        elif p >= bbu_v: sell_score += 1; sell_why.append("BB ❌ Above upper band")
+        elif bb_pct < 0.30: buy_score += 1; buy_why.append("BB ✅ Lower zone")
+        elif bb_pct > 0.70: sell_score += 1; sell_why.append("BB ❌ Upper zone")
+
+        if p > p1 > p2 > p3: buy_score += 1; buy_why.append("Momentum ✅ 4 bull candles")
+        elif p > p1 > p2: buy_score += 1; buy_why.append("Momentum ✅ 3 bull candles")
+        elif p < p1 < p2 < p3: sell_score += 1; sell_why.append("Momentum ❌ 4 bear candles")
+        elif p < p1 < p2: sell_score += 1; sell_why.append("Momentum ❌ 3 bear candles")
+
+        p20 = round(float(self.df["Close"].iloc[-21]), 5) if len(self.df) > 21 else p
+        macro_bullish, macro_bearish = p > p20, p < p20
+        buy_rsi_bb = any("RSI" in r or "BB" in r for r in buy_why)
+        sell_rsi_bb = any("RSI" in r or "BB" in r for r in sell_why)
+
+        # ── 5. FINAL DECISION ────────────────────────────────────────────────
+        if news_momentum_buy:
             direction = "BUY"
-            reasons   = buy_why
-            strength  = round((buy_score / 6) * 100)
-
-        elif (sell_score >= min_score and sell_score > buy_score
-                and sell_rsi_bb and not ema200_bullish
-                and macro_bearish):   # ← NEW: 20h macro trend bearish
+            reasons = [f"🔥 News Momentum Bounce ({news_title})", f"ADX {adx_val} >= 30 ✅", "EMA20 Pullback ✅"]
+            strength = 100
+        elif news_momentum_sell:
             direction = "SELL"
-            reasons   = sell_why
-            strength  = round((sell_score / 6) * 100)
-
+            reasons = [f"🔥 News Momentum Bounce ({news_title})", f"ADX {adx_val} >= 30 ✅", "EMA20 Pullback ✅"]
+            strength = 100
+        elif buy_score >= min_score and buy_score > sell_score and buy_rsi_bb and ema200_bullish and macro_bullish:
+            direction = "BUY"
+            reasons = buy_why
+            strength = round((buy_score / 6) * 100)
+        elif sell_score >= min_score and sell_score > buy_score and sell_rsi_bb and not ema200_bullish and macro_bearish:
+            direction = "SELL"
+            reasons = sell_why
+            strength = round((sell_score / 6) * 100)
         else:
             direction = "NEUTRAL"
-            strength  = round((max(buy_score, sell_score) / 6) * 100)
-            neutral_reasons = []
+            strength = round((max(buy_score, sell_score) / 6) * 100)
+            reasons = ["⚖️ Waiting for setup"]
 
-            if buy_score >= min_score and buy_score > sell_score:
-                if not buy_rsi_bb:
-                    neutral_reasons.append("⚠️ RSI/BB confirmation නෑ — skip")
-                if not ema200_bullish:
-                    neutral_reasons.append("⚠️ EMA200 downtrend — BUY conflict")
-                if not macro_bullish:
-                    neutral_reasons.append("⚠️ Macro downtrend (20h) — BUY blocked")
-            elif sell_score >= min_score and sell_score > buy_score:
-                if not sell_rsi_bb:
-                    neutral_reasons.append("⚠️ RSI/BB confirmation නෑ — skip")
-                if ema200_bullish:
-                    neutral_reasons.append("⚠️ EMA200 uptrend — SELL conflict")
-                if not macro_bearish:
-                    neutral_reasons.append("⚠️ Macro uptrend (20h) — SELL blocked")
-            elif sym in VOLATILE_PAIRS and max(buy_score, sell_score) == 4:
-                neutral_reasons.append(f"⚠️ {sym} 4/6 — volatile pair, 5/6 required")
-            else:
-                neutral_reasons.append("⚖️ No clear signal")
-
-            reasons = neutral_reasons
-
-        # ── RISK MANAGEMENT ──────────────────────────────────────────────────
+        # ── 6. RISK MANAGEMENT ───────────────────────────────────────────────
         sl = tp1 = tp2 = rr = None
         if direction in ("BUY", "SELL"):
-            sl_dist   = atr_v * ATR_SL_MULTI
-            # min SL enforce — noise hit avoid (USDJPY 6.7 pip SL fix)
-            actual_sl = max(
-                min(sl_dist, self._get_max_sl_dist()),
-                self._get_min_sl_dist()
-            )
-            ratio     = ATR_TP_MULTI / ATR_SL_MULTI
+            if is_news_momentum and (news_momentum_buy or news_momentum_sell):
+                # News Setup: Dynamic SL based on last 3 candles extreme + buffer
+                recent_low = float(self.df["Low"].iloc[-3:].min())
+                recent_high = float(self.df["High"].iloc[-3:].max())
+                sl_dist_raw = (p - recent_low) if direction == "BUY" else (recent_high - p)
+                sl_dist = sl_dist_raw + (atr_v * 0.2)
+            else:
+                sl_dist = atr_v * ATR_SL_MULTI
+                
+            actual_sl = max(min(sl_dist, self._get_max_sl_dist()), self._get_min_sl_dist())
+            ratio = ATR_TP_MULTI / ATR_SL_MULTI
             actual_tp = actual_sl * ratio
 
             if direction == "BUY":
-                sl  = round(p - actual_sl,       5)
-                tp1 = round(p + actual_tp * 0.6, 5)
-                tp2 = round(p + actual_tp,       5)
+                sl, tp1, tp2 = round(p - actual_sl, 5), round(p + actual_tp * 0.6, 5), round(p + actual_tp, 5)
             else:
-                sl  = round(p + actual_sl,       5)
-                tp1 = round(p - actual_tp * 0.6, 5)
-                tp2 = round(p - actual_tp,       5)
+                sl, tp1, tp2 = round(p + actual_sl, 5), round(p - actual_tp * 0.6, 5), round(p - actual_tp, 5)
             rr = round(ratio, 1)
 
-        # ── SIGNAL VALIDITY WINDOW ───────────────────────────────────────────
-        valid_until_lk  = (now_utc + timedelta(minutes=SIGNAL_VALID_MINUTES)
-                           + timedelta(hours=5, minutes=30))
-        valid_until_str = valid_until_lk.strftime("%I:%M %p") + " (LK)"
+        valid_until_str = (now_utc + timedelta(minutes=SIGNAL_VALID_MINUTES) + timedelta(hours=5, minutes=30)).strftime("%I:%M %p") + " (LK)"
 
         return {
-            "symbol":        self.symbol,
-            "price":         p,
-            "direction":     direction,
-            "strength":      strength,
-            "buy_score":     buy_score,
-            "sell_score":    sell_score,
-            "reasons":       reasons,
-            "session":       session_name,
-            "session_ok":    True,
-            "news_blocked":  False,
-            "valid_until":   valid_until_str,
-            "pos_size_warn": POSITION_SIZE_WARNINGS.get(sym),
-            "rsi":           rsi_now,
-            "ema20":         ema20_v,
-            "ema50":         ema50_v,
-            "ema200":        ema200_v,
-            "macd":          macd_v,
-            "atr":           atr_v,
-            "adx":           adx_val,
-            "stop_loss":     sl,
-            "take_profit1":  tp1,
-            "take_profit2":  tp2,
-            "risk_reward":   rr,
+            "symbol": self.symbol, "price": p, "direction": direction,
+            "strength": strength, "buy_score": buy_score, "sell_score": sell_score,
+            "reasons": reasons, "session": session_name, "session_ok": True, "news_blocked": False,
+            "valid_until": valid_until_str, "pos_size_warn": POSITION_SIZE_WARNINGS.get(sym),
+            "rsi": rsi_now, "ema20": ema20_v, "ema50": ema50_v, "ema200": ema200_v,
+            "macd": macd_v, "atr": atr_v, "adx": adx_val, "stop_loss": sl,
+            "take_profit1": tp1, "take_profit2": tp2, "risk_reward": rr,
         }

@@ -1,7 +1,8 @@
 """
 news_filter.py — High Impact News detection.
 Forex Factory calendar API use කරලා
-trade කිරීමට 30 min කලින් සහ පසු block කරනවා.
+trade කිරීමට 30 min කලින් සහ 5 min පසු block කරනවා.
+විනාඩි 5 සිට 30 දක්වා කාලය News Momentum (Pullback) සඳහා වෙන් කරයි.
 """
 
 import requests
@@ -35,38 +36,31 @@ def get_high_impact_news() -> list:
                 _last_fetch  = now
                 print(f"  📰 News cache updated — {len(_cached_news)} events loaded.")
             else:
-                # ── Bug fix: fetch fail වුණොත් empty list cache කරනවා ──────
-                # නැතිනම් හැම call ගානේම API hit කරනවා
                 print(f"  ⚠️  News API status {r.status_code} — signals unblocked.")
                 _cached_news = []
                 _last_fetch  = now
 
         except Exception as e:
             print(f"  ⚠️  News fetch error: {e} — signals unblocked.")
-            # ── Bug fix: exception හිදීත් cache set කරනවා ──────────────────
             _cached_news = []
             _last_fetch  = now
 
     return _cached_news or []
 
 
-def check_news_conflict(symbol: str, buffer_minutes: int = 30) -> tuple[bool, str]:
+def check_news_conflict(symbol: str, pre_buffer: int = 30, post_buffer: int = 30, safe_delay: int = 5) -> tuple[str, str]:
     """
-    Symbol ට අදාළ HIGH impact news ±buffer_minutes ඇතුළත තිඛෙනවාද?
-
     Returns:
-        (True, news_title)  — blocked
-        (False, "")         — clear to trade
+        ("BLOCKED", title)       — News is within -30 to +5 mins (Spread too high)
+        ("NEWS_MOMENTUM", title) — News was 5 to 30 mins ago (Look for Pullbacks)
+        ("CLEAR", "")            — No news conflict
     """
     news_data = get_high_impact_news()
     if not news_data:
-        return False, ""
+        return "CLEAR", ""
 
     sym = symbol.upper()
 
-    # ── Target currencies for this symbol ───────────────────────────────────
-    # GOLD/BTC = USD news affects them
-    # Forex pairs = both currencies (e.g. EURUSD → EUR + USD)
     if sym in ("GOLD", "XAUUSD", "BTCUSD"):
         target_curs = {"USD"}
     elif len(sym) == 6:
@@ -77,36 +71,36 @@ def check_news_conflict(symbol: str, buffer_minutes: int = 30) -> tuple[bool, st
     now_utc = datetime.now(timezone.utc)
 
     for item in news_data:
-        # HIGH impact පමණක් — medium/low ignore
         if item.get("impact") != "High":
             continue
 
-        # ── Bug fix: country field case-insensitive match ────────────────────
         country = (item.get("country") or "").upper()
         if country not in target_curs:
             continue
 
-        # ── Date parse ───────────────────────────────────────────────────────
         dt_str = item.get("date") or item.get("datetime") or ""
         if not dt_str:
             continue
 
         try:
-            # Handles ISO format: "2026-05-29T08:30:00-04:00"
             news_dt = datetime.fromisoformat(dt_str).astimezone(timezone.utc)
         except ValueError:
-            # Fallback: try without timezone
             try:
-                news_dt = datetime.strptime(dt_str[:19], "%Y-%m-%dT%H:%M:%S").replace(
-                    tzinfo=timezone.utc
-                )
+                news_dt = datetime.strptime(dt_str[:19], "%Y-%m-%dT%H:%M:%S").replace(tzinfo=timezone.utc)
             except Exception:
                 continue
 
-        diff_mins = abs((now_utc - news_dt).total_seconds()) / 60.0
+        # (+) means news is in the past, (-) means news is in the future
+        time_since_news = (now_utc - news_dt).total_seconds() / 60.0
 
-        if diff_mins <= buffer_minutes:
+        if -pre_buffer <= time_since_news < safe_delay:
+            # Block trades 30 mins before until 5 mins after
             title = item.get("title") or item.get("name") or "High Impact News"
-            return True, f"{country} — {title}"
+            return "BLOCKED", f"{country} — {title}"
+            
+        elif safe_delay <= time_since_news <= post_buffer:
+            # Open News Momentum Window (5 to 30 mins after news)
+            title = item.get("title") or item.get("name") or "High Impact News"
+            return "NEWS_MOMENTUM", f"{country} — {title}"
 
-    return False, ""
+    return "CLEAR", ""
