@@ -12,26 +12,19 @@ TWELVEDATA_KEY = os.environ.get("TWELVEDATA_KEY", "")
 # Format: "DisplayName": "API_Ticker"
 # Pairs 8 → 13 (signals frequency increase)
 FOREX_PAIRS = {
-    # London + NY session pairs
-    "EURUSD": "EUR/USD",
-    "GBPUSD": "GBP/USD",
-    "USDCHF": "USD/CHF",
-    "USDCAD": "USD/CAD",
-    "EURGBP": "EUR/GBP",   # ← NEW
-
-    # Tokyo + London session pairs
-    "USDJPY": "USD/JPY",
-    "EURJPY": "EUR/JPY",   # ← NEW
-    "GBPJPY": "GBP/JPY",   # ← NEW
-
-    # Sydney + Tokyo session pairs
-    "AUDUSD": "AUD/USD",
-    "NZDUSD": "NZD/USD",   # ← NEW
-    "AUDJPY": "AUD/JPY",   # ← NEW
-
-    # Volatile pairs (MIN_SCORE 5 required)
-    "GOLD":   "XAU/USD",
-    "BTCUSD": "BTC/USD",
+    "EURUSD": "EURUSD=X",
+    "GBPUSD": "GBPUSD=X",
+    "USDJPY": "USDJPY=X",
+    "USDCHF": "USDCHF=X",
+    "AUDUSD": "AUDUSD=X",
+    "USDCAD": "USDCAD=X",
+    "NZDUSD": "NZDUSD=X",
+    "EURGBP": "EURGBP=X",
+    "EURJPY": "EURJPY=X",
+    "GBPJPY": "GBPJPY=X",
+    "AUDJPY": "AUDJPY=X",
+    "GOLD":   "GC=F",      # Gold Futures
+    "BTCUSD": "BTC-USD"    # Bitcoin
 }
 
 # ── Indicator Settings ───────────────────────────────────────────────────────

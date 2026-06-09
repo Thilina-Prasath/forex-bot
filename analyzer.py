@@ -1,12 +1,5 @@
 """
-Indicators (6 points max):
-  1. EMA200    — Long-term trend
-  2. EMA 20/50 — Medium trend crossover
-  3. RSI       — Refined zones
-  4. MACD      — Histogram + zero-line
-  5. Bollinger Bands — Band position
-  6. Momentum  — 3/4 candle price action
-  + NEWS MOMENTUM OVERRIDE: Catches pullbacks 5-30 mins after High Impact News
+Indicators (6 points max) & News Momentum Logic
 """
 
 import pandas as pd
@@ -20,13 +13,13 @@ from config import (
 )
 from news_filter import check_news_conflict
 
-SIGNAL_VALID_MINUTES = 3
+SIGNAL_VALID_MINUTES = 5
 VOLATILE_PAIRS     = {"GOLD", "XAUUSD", "BTCUSD"}
 VOLATILE_MIN_SCORE = 5
 
 POSITION_SIZE_WARNINGS = {
-    "GOLD":   "⚠️ GOLD — Max 0.01 Troy Oz only! (News trades carry high risk)",
-    "XAUUSD": "⚠️ GOLD — Max 0.01 Troy Oz only! (News trades carry high risk)",
+    "GOLD":   "⚠️ GOLD — Max 0.01 Troy Oz only!",
+    "XAUUSD": "⚠️ GOLD — Max 0.01 Troy Oz only!",
     "BTCUSD": "⚠️ BTC  — Max 0.001 lot use කරන්න!",
 }
 
@@ -54,12 +47,10 @@ def get_session_status(symbol: str, dt_utc: datetime = None) -> tuple[bool, str]
     if dt_utc is None: dt_utc = datetime.now(timezone.utc)
     hour = dt_utc.hour
     sym  = symbol.upper().replace("XAUUSD", "GOLD")
-
     active_sessions = PAIR_ACTIVE_SESSIONS.get(sym, ["london", "ny"])
     active_now = [s for s in active_sessions if _in_session(s, hour)]
 
     if active_now: return True, " + ".join(SESSION_LABELS[s] for s in active_now)
-
     next_session  = active_sessions[0]
     next_utc_hour = 22 if next_session == "sydney" else SESSION_RANGES[next_session][0]
     next_open     = dt_utc.replace(hour=next_utc_hour, minute=0, second=0, microsecond=0)
@@ -68,16 +59,14 @@ def get_session_status(symbol: str, dt_utc: datetime = None) -> tuple[bool, str]
     wait = next_open - dt_utc
     wait_h = int(wait.total_seconds() // 3600)
     wait_m = int((wait.total_seconds() % 3600) // 60)
-    return False, f"Off-session ⏸️  ({SESSION_LABELS[next_session]} opens in {wait_h}h {wait_m}m)"
+    return False, f"Off-session ⏸️  ({wait_h}h {wait_m}m)"
 
-def _empty_result(symbol: str, price: float, reason: str, session_ok: bool, session_name: str, news_blocked: bool = False) -> dict:
+def _empty_result(symbol, price, reason, session_ok, session_name, news_blocked=False):
     return {
-        "symbol": symbol, "price": price, "direction": "NEUTRAL",
-        "strength": 0, "buy_score": 0, "sell_score": 0, "reasons": [reason],
-        "session": session_name, "session_ok": session_ok, "news_blocked": news_blocked,
-        "valid_until": None, "pos_size_warn": None, "rsi": None, "ema20": None,
-        "ema50": None, "ema200": None, "macd": None, "atr": None, "stop_loss": None,
-        "take_profit1": None, "take_profit2": None, "risk_reward": None,
+        "symbol": symbol, "price": price, "direction": "NEUTRAL", "strength": 0, "buy_score": 0, "sell_score": 0,
+        "reasons": [reason], "session": session_name, "session_ok": session_ok, "news_blocked": news_blocked,
+        "valid_until": None, "pos_size_warn": None, "rsi": None, "ema20": None, "ema50": None, "ema200": None,
+        "macd": None, "atr": None, "stop_loss": None, "take_profit1": None, "take_profit2": None, "risk_reward": None,
     }
 
 class ForexAnalyzer:
@@ -86,20 +75,15 @@ class ForexAnalyzer:
         self.df     = df.copy()
 
     def _ema(self, period): return self.df["Close"].ewm(span=period, adjust=False).mean()
-
+    
     def _rsi(self):
         delta = self.df["Close"].diff()
-        gain  = delta.clip(lower=0)
-        loss  = -delta.clip(upper=0)
-        ag = gain.ewm(com=RSI_PERIOD - 1, min_periods=RSI_PERIOD).mean()
-        al = loss.ewm(com=RSI_PERIOD - 1, min_periods=RSI_PERIOD).mean()
-        rs = ag / al.replace(0, np.nan)
+        gain, loss  = delta.clip(lower=0), -delta.clip(upper=0)
+        rs = gain.ewm(com=RSI_PERIOD-1, min_periods=RSI_PERIOD).mean() / loss.ewm(com=RSI_PERIOD-1, min_periods=RSI_PERIOD).mean().replace(0, np.nan)
         return 100 - (100 / (1 + rs))
 
     def _macd(self):
-        e12  = self.df["Close"].ewm(span=12, adjust=False).mean()
-        e26  = self.df["Close"].ewm(span=26, adjust=False).mean()
-        line = e12 - e26
+        line = self._ema(12) - self._ema(26)
         sig  = line.ewm(span=9, adjust=False).mean()
         return line, sig, line - sig
 
@@ -143,7 +127,6 @@ class ForexAnalyzer:
         price   = round(float(self.df["Close"].iloc[-1]), 5)
         sym     = self.symbol.upper()
 
-        # ── 1. SESSION & NEWS FILTER ─────────────────────────────────────────
         session_ok, session_name = get_session_status(self.symbol, now_utc)
         if not session_ok:
             return _empty_result(self.symbol, price, f"⏸️ {session_name}", False, session_name)
@@ -152,11 +135,10 @@ class ForexAnalyzer:
         is_news_momentum = False
 
         if news_status == "BLOCKED":
-            return _empty_result(self.symbol, price, f"🚨 News Spike Risk: {news_title}", True, session_name, True)
+            return _empty_result(self.symbol, price, f"🚨 News Blocked: {news_title}", True, session_name, True)
         elif news_status == "NEWS_MOMENTUM":
             is_news_momentum = True
 
-        # ── 2. BASE INDICATORS ───────────────────────────────────────────────
         try: adx_val = self._adx()
         except Exception: adx_val = 30.0
 
@@ -178,28 +160,23 @@ class ForexAnalyzer:
         macd_v, sig_v, hist_now, hist_pre = round(float(macd_l.iloc[-1]), 6), round(float(macd_s.iloc[-1]), 6), round(float(macd_h.iloc[-1]), 6), round(float(macd_h.iloc[-2]), 6)
         bbu_v, bbl_v, atr_v = round(float(bb_up.iloc[-1]), 5), round(float(bb_lo.iloc[-1]), 5), round(float(atr.iloc[-1]), 5)
 
-        # ── 3. NEWS MOMENTUM OVERRIDE LOGIC ──────────────────────────────────
+        # ── NEWS MOMENTUM LOGIC (Breakout Riding) ────────────────────────────
         news_momentum_buy = False
         news_momentum_sell = False
-        ema200_bullish = p > ema200_v
 
         if is_news_momentum and adx_val >= 30:
-            # Check for EMA20 pullback bounce (Price is within 0.8 ATR of EMA20)
-            price_near_ema20 = abs(p - ema20_v) <= (atr_v * 0.8)
-            
-            if ema200_bullish and price_near_ema20 and p > p1:
+            # ADX 30 ට වැඩියි කියන්නේ නිව්ස් එක නිසා මාකට් එක වේගයෙන් යනවා.
+            if p > ema20_v and p > p1 and rsi_now > 50:
                 news_momentum_buy = True
-            elif not ema200_bullish and price_near_ema20 and p < p1:
+            elif p < ema20_v and p < p1 and rsi_now < 50:
                 news_momentum_sell = True
 
-        # ── 4. STANDARD LOGIC ────────────────────────────────────────────────
-        buy_score, sell_score = 0, 0
-        buy_why, sell_why = [], []
+        # ── STANDARD LOGIC ───────────────────────────────────────────────────
+        buy_score, sell_score, buy_why, sell_why = 0, 0, [], []
         min_score = VOLATILE_MIN_SCORE if sym in VOLATILE_PAIRS else MIN_SCORE
 
         if p > ema200_v: buy_score += 1; buy_why.append("EMA200 ✅ Uptrend")
         else: sell_score += 1; sell_why.append("EMA200 ❌ Downtrend")
-
         if ema20_v > ema50_v: buy_score += 1; buy_why.append("EMA20>50 ✅ Bullish")
         else: sell_score += 1; sell_why.append("EMA20<50 ❌ Bearish")
 
@@ -230,40 +207,36 @@ class ForexAnalyzer:
         buy_rsi_bb = any("RSI" in r or "BB" in r for r in buy_why)
         sell_rsi_bb = any("RSI" in r or "BB" in r for r in sell_why)
 
-        # ── 5. FINAL DECISION ────────────────────────────────────────────────
+        # ── FINAL DECISION ───────────────────────────────────────────────────
         if news_momentum_buy:
-            direction = "BUY"
-            reasons = [f"🔥 News Momentum Bounce ({news_title})", f"ADX {adx_val} >= 30 ✅", "EMA20 Pullback ✅"]
-            strength = 100
+            direction, reasons, strength = "BUY", [f"🔥 News Breakout ({news_title})", f"ADX {adx_val} >= 30 ✅"], 100
         elif news_momentum_sell:
-            direction = "SELL"
-            reasons = [f"🔥 News Momentum Bounce ({news_title})", f"ADX {adx_val} >= 30 ✅", "EMA20 Pullback ✅"]
-            strength = 100
+            direction, reasons, strength = "SELL", [f"🔥 News Breakout ({news_title})", f"ADX {adx_val} >= 30 ✅"], 100
         elif buy_score >= min_score and buy_score > sell_score and buy_rsi_bb and ema200_bullish and macro_bullish:
-            direction = "BUY"
-            reasons = buy_why
-            strength = round((buy_score / 6) * 100)
+            direction, reasons, strength = "BUY", buy_why, round((buy_score / 6) * 100)
         elif sell_score >= min_score and sell_score > buy_score and sell_rsi_bb and not ema200_bullish and macro_bearish:
-            direction = "SELL"
-            reasons = sell_why
-            strength = round((sell_score / 6) * 100)
+            direction, reasons, strength = "SELL", sell_why, round((sell_score / 6) * 100)
         else:
-            direction = "NEUTRAL"
-            strength = round((max(buy_score, sell_score) / 6) * 100)
-            reasons = ["⚖️ Waiting for setup"]
+            direction, strength = "NEUTRAL", round((max(buy_score, sell_score) / 6) * 100)
+            reasons = []
+            if buy_score >= min_score and buy_score > sell_score:
+                if not buy_rsi_bb: reasons.append("⚠️ RSI/BB confirmation නෑ")
+                elif not ema200_bullish: reasons.append("⚠️ EMA200 downtrend")
+                elif not macro_bullish: reasons.append("⚠️ Macro downtrend (20h)")
+            elif sell_score >= min_score and sell_score > buy_score:
+                if not sell_rsi_bb: reasons.append("⚠️ RSI/BB confirmation නෑ")
+                elif ema200_bullish: reasons.append("⚠️ EMA200 uptrend")
+                elif not macro_bearish: reasons.append("⚠️ Macro uptrend (20h)")
+            elif sym in VOLATILE_PAIRS and max(buy_score, sell_score) == 4: reasons.append(f"⚠️ {sym} 4/6 — 5/6 required")
+            else: reasons.append("⚖️ Waiting for setup")
 
-        # ── 6. RISK MANAGEMENT ───────────────────────────────────────────────
+        # ── RISK MANAGEMENT ──────────────────────────────────────────────────
         sl = tp1 = tp2 = rr = None
         if direction in ("BUY", "SELL"):
-            if is_news_momentum and (news_momentum_buy or news_momentum_sell):
-                # News Setup: Dynamic SL based on last 3 candles extreme + buffer
-                recent_low = float(self.df["Low"].iloc[-3:].min())
-                recent_high = float(self.df["High"].iloc[-3:].max())
-                sl_dist_raw = (p - recent_low) if direction == "BUY" else (recent_high - p)
-                sl_dist = sl_dist_raw + (atr_v * 0.2)
-            else:
-                sl_dist = atr_v * ATR_SL_MULTI
-                
+            # News Breakout සඳහා 5m/1m චාට් එකට ගැළපෙන පරිදි SL ටිකක් විශාල කරයි
+            sl_multiplier = 3.0 if is_news_momentum else ATR_SL_MULTI
+            sl_dist = atr_v * sl_multiplier
+            
             actual_sl = max(min(sl_dist, self._get_max_sl_dist()), self._get_min_sl_dist())
             ratio = ATR_TP_MULTI / ATR_SL_MULTI
             actual_tp = actual_sl * ratio
@@ -277,11 +250,8 @@ class ForexAnalyzer:
         valid_until_str = (now_utc + timedelta(minutes=SIGNAL_VALID_MINUTES) + timedelta(hours=5, minutes=30)).strftime("%I:%M %p") + " (LK)"
 
         return {
-            "symbol": self.symbol, "price": p, "direction": direction,
-            "strength": strength, "buy_score": buy_score, "sell_score": sell_score,
-            "reasons": reasons, "session": session_name, "session_ok": True, "news_blocked": False,
-            "valid_until": valid_until_str, "pos_size_warn": POSITION_SIZE_WARNINGS.get(sym),
-            "rsi": rsi_now, "ema20": ema20_v, "ema50": ema50_v, "ema200": ema200_v,
-            "macd": macd_v, "atr": atr_v, "adx": adx_val, "stop_loss": sl,
-            "take_profit1": tp1, "take_profit2": tp2, "risk_reward": rr,
+            "symbol": self.symbol, "price": p, "direction": direction, "strength": strength, "buy_score": buy_score, "sell_score": sell_score,
+            "reasons": reasons, "session": session_name, "session_ok": True, "news_blocked": False, "valid_until": valid_until_str,
+            "pos_size_warn": POSITION_SIZE_WARNINGS.get(sym), "rsi": rsi_now, "ema20": ema20_v, "ema50": ema50_v, "ema200": ema200_v,
+            "macd": macd_v, "atr": atr_v, "adx": adx_val, "stop_loss": sl, "take_profit1": tp1, "take_profit2": tp2, "risk_reward": rr,
         }
