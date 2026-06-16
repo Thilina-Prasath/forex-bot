@@ -1,6 +1,12 @@
+"""
+telegram_notifier.py — Signal formatting + Telegram delivery
+News Momentum signals සඳහා වෙනම format එකක් ඇත.
+"""
+
 import requests
 from datetime import datetime, timezone, timedelta
 import time
+
 
 class TelegramNotifier:
 
@@ -21,11 +27,9 @@ class TelegramNotifier:
                 timeout=15,
             )
             time.sleep(3)
-
             if resp.status_code != 200:
                 print(f"     ❌ Telegram Rejected: {resp.text}")
                 return False
-
             return True
         except Exception as e:
             print(f"  Telegram error: {e}")
@@ -35,8 +39,10 @@ class TelegramNotifier:
         d     = sig["direction"]
         s     = sig["strength"]
         score = sig["buy_score"] if d == "BUY" else sig["sell_score"]
+        sym   = sig["symbol"]
+        is_news = sig.get("news_momentum", False)
 
-        # UTC + ලංකා වෙලාව දෙකම show කරනවා
+        # Time strings
         now_utc = datetime.now(timezone.utc)
         now_lk  = now_utc + timedelta(hours=5, minutes=30)
         time_str = (
@@ -44,15 +50,13 @@ class TelegramNotifier:
             f"({now_utc.strftime('%H:%M')} UTC)"
         )
 
-        # Session info
         session_name = sig.get("session", "Unknown")
 
-        # Pair-specific decimal places
-        sym = sig["symbol"]
+        # Decimal places per pair
         dec = 3 if "JPY" in sym else (2 if sym in ["GOLD", "BTCUSD"] else 5)
         fmt = lambda v: f"{v:.{dec}f}" if v is not None else "—"
 
-        # ── OFF-SESSION message ──────────────────────────────────────────────
+        # ── OFF-SESSION ──────────────────────────────────────────────────────
         if not sig.get("session_ok", True):
             reason = sig["reasons"][0] if sig["reasons"] else "Off-session"
             return (
@@ -64,7 +68,7 @@ class TelegramNotifier:
                 f"<i>ලංකා වෙලාව 1:30 PM – 9:00 PM ට signal බලන්න.</i>"
             )
 
-        # ── NEUTRAL message ──────────────────────────────────────────────────
+        # ── NEUTRAL ──────────────────────────────────────────────────────────
         if d == "NEUTRAL":
             reasons_text = "\n".join(
                 f"  • {r.replace('<','&lt;').replace('>','&gt;')}"
@@ -80,9 +84,8 @@ class TelegramNotifier:
                 f"<i>⏳ Clearer setup එන්නකල් wait කරන්න.</i>"
             )
 
-        # ── BUY / SELL message ───────────────────────────────────────────────
+        # ── BUY / SELL ───────────────────────────────────────────────────────
         icon  = "🟢" if d == "BUY" else "🔴"
-
         filled = max(0, min(5, round(s / 20)))
         bar    = "█" * filled + "░" * (5 - filled)
 
@@ -91,13 +94,26 @@ class TelegramNotifier:
             for r in sig["reasons"]
         )
 
-        # ── ENTRY VALIDITY WINDOW (Change 2) ────────────────────────────────
-        # Telegram message ලැබුණු වහාම enter කළ යුතුයි.
-        # valid_until වෙලාවෙන් පසු signal expired — trade නොගන්න.
         valid_until = sig.get("valid_until", "—")
 
+        # News momentum badge
+        if is_news:
+            header = f"📰 {icon} <b>{sym}  —  {d}  [NEWS MOMENTUM]</b>"
+            news_note = (
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"⚡ <b>News-driven move! වේගයෙන් enter කරන්න!</b>\n"
+                f"⏱️ Valid: <b>{valid_until}</b> only\n"
+            )
+        else:
+            header = f"{icon} <b>{sym}  —  {d}</b>"
+            news_note = (
+                f"━━━━━━━━━━━━━━━━━━━━\n"
+                f"⏰ ⚡ <b>Valid until: {valid_until}</b>\n"
+                f"❌ <b>මේ වෙලාවෙන් පසු skip කරන්න!</b>\n"
+            )
+
         msg = (
-            f"{icon} <b>{sym}  —  {d}</b>\n"
+            f"{header}\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"💰 Entry : <b>{fmt(sig['price'])}</b>\n"
             f"🛑 SL    : <b>{fmt(sig['stop_loss'])}</b>\n"
@@ -107,11 +123,11 @@ class TelegramNotifier:
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 Strength : {s}%  [{bar}]  {score}/6\n"
             f"📍 Session  : {session_name}\n"
+            f"📈 ADX      : {sig.get('adx', '—')}\n"
             f"🔍 Signals  :\n{clean_reasons}\n"
-            f"━━━━━━━━━━━━━━━━━━━━\n"
-            f"⏰ {time_str}\n"
-            f"⚡ <b>Valid until: {valid_until}</b>\n"
-            f"❌ <b>මේ වෙලාවෙන් පසු skip කරන්න!</b>\n"
+            + news_note
+            + f"━━━━━━━━━━━━━━━━━━━━\n"
+            f"🕐 {time_str}\n"
             + (f"━━━━━━━━━━━━━━━━━━━━\n{sig.get('pos_size_warn')}\n"
                if sig.get("pos_size_warn") else "")
             + f"<i>⚠️ Demo/educational use only.</i>"
@@ -119,9 +135,8 @@ class TelegramNotifier:
         return msg
 
     def send_signal(self, sig: dict) -> bool:
-        # Session බාහිර signals send නොකරනවා (off-session NEUTRAL skip)
         if not sig.get("session_ok", True):
-            print(f"  ⏸️  {sig['symbol']} — Off-session, signal not sent.")
+            print(f"  ⏸️  {sig['symbol']} — Off-session, not sent.")
             return False
         return self.send(self.format_signal(sig))
 
@@ -129,12 +144,12 @@ class TelegramNotifier:
         buys  = [s for s in signals if s["direction"] == "BUY"]
         sells = [s for s in signals if s["direction"] == "SELL"]
 
-        now_utc = datetime.now(timezone.utc)
-        now_lk  = now_utc + timedelta(hours=5, minutes=30)
+        now_utc  = datetime.now(timezone.utc)
+        now_lk   = now_utc + timedelta(hours=5, minutes=30)
         date_str = now_lk.strftime("%d %b %Y")
 
         msg = (
-            f"📋 <b>Daily Summary  —  {date_str}</b>\n"
+            f"📋 <b>Summary  —  {date_str}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"🟢 BUY  : <b>{len(buys)}</b>   🔴 SELL : <b>{len(sells)}</b>\n"
         )
@@ -142,15 +157,17 @@ class TelegramNotifier:
         if buys:
             msg += "\n🟢 <b>BUY:</b>\n"
             for s in sorted(buys, key=lambda x: x["strength"], reverse=True):
-                msg += f"  • <b>{s['symbol']}</b>  {s['strength']}%  @ {s['price']}\n"
+                tag = " 📰" if s.get("news_momentum") else ""
+                msg += f"  • <b>{s['symbol']}</b>  {s['strength']}%  @ {s['price']}{tag}\n"
 
         if sells:
             msg += "\n🔴 <b>SELL:</b>\n"
             for s in sorted(sells, key=lambda x: x["strength"], reverse=True):
-                msg += f"  • <b>{s['symbol']}</b>  {s['strength']}%  @ {s['price']}\n"
+                tag = " 📰" if s.get("news_momentum") else ""
+                msg += f"  • <b>{s['symbol']}</b>  {s['strength']}%  @ {s['price']}{tag}\n"
 
         if not buys and not sells:
-            msg += "\n<i>No strong signals today. Market is ranging.</i>\n"
+            msg += "\n<i>No strong signals. Market is ranging.</i>\n"
 
         msg += "\n<i>⚠️ Educational only. DYOR.</i>"
         return self.send(msg)
@@ -159,15 +176,16 @@ class TelegramNotifier:
         return self.send(f"⚠️ <b>Bot Error:</b>\n<code>{msg}</code>")
 
     def send_startup(self, pairs: list) -> bool:
-        now_lk = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
+        now_lk    = datetime.now(timezone.utc) + timedelta(hours=5, minutes=30)
         pair_list = "  •  ".join(pairs)
         msg = (
-            f"🤖 <b>Forex Signal Bot v4 Started</b>\n"
+            f"🤖 <b>Forex Signal Bot v4.0 Started</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━\n"
             f"📊 {pair_list}\n"
+            f"📰 News Momentum mode: ACTIVE\n"
             f"⏰ Active session: 1:30 PM – 9:00 PM LK\n"
-            f"⚡ Signal validity: 3 minutes only\n"
-            f"✅ Session filter  |  RSI/BB mandatory  |  EMA200 aligned\n"
+            f"⚡ News signals: 60s scan interval\n"
+            f"⏱️ Normal signals: 60min scan interval\n"
             f"<i>Bot is live. Trade safe! 🚀</i>"
         )
         return self.send(msg)
