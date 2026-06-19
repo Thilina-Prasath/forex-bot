@@ -189,3 +189,4 @@ class TelegramNotifier:
             f"<i>Bot is live. Trade safe! 🚀</i>"
         )
         return self.send(msg)
+    

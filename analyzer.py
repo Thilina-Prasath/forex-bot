@@ -434,3 +434,4 @@ class ForexAnalyzer:
             "stop_loss": sl, "take_profit1": tp1, "take_profit2": tp2,
             "risk_reward": rr,
         }
+    

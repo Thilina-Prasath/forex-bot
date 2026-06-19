@@ -1,71 +1,103 @@
 """
 data_fetcher.py
 Yahoo Finance (yfinance) මඟින් දත්ත ලබාගැනීම.
-API limits නොමැත, එබැවින් M1 (1-Minute) දත්ත පවා ලබා ගත හැක.
+
+Interval strategy:
+  Normal scan  → "1h" interval, 60d period  (1440 candles — EMA200 ට ඕනෑ)
+  News scan    → "5m" interval,  5d period  (1440 candles — fast momentum)
 """
 
 import yfinance as yf
 import pandas as pd
 
+
+# ── Yahoo Finance interval → period mapping ──────────────────────────────────
+# EMA200 ට minimum 200 candles ඕනේ. 
+# Yahoo limits: 1m=7d, 5m=60d, 15m=60d, 30m=60d, 1h=730d, 1d=max
+INTERVAL_PERIOD_MAP = {
+    "1m":  "7d",    # 7d × 1440 min/day ≈ 10080 candles (market hours only ~2500)
+    "2m":  "7d",
+    "5m":  "60d",   # 60d × 288 = 17280 → plenty
+    "15m": "60d",
+    "30m": "60d",
+    "1h":  "60d",   # 60d × 24 = 1440 → EMA200 OK ✅
+    "60m": "60d",
+    "4h":  "60d",
+    "1d":  "max",
+}
+
+DEFAULT_INTERVAL = "1h"   # Normal technical scan
+NEWS_INTERVAL    = "5m"   # News momentum scan (fast candles)
+
+
 class DataFetcher:
     def __init__(self):
-        # Yahoo Finance සඳහා API Key අවශ්‍ය නොවේ.
         pass
 
-    def get_candles(self, symbol: str, ticker: str, interval: str = "1h") -> pd.DataFrame | None:
+    def get_candles(
+        self,
+        symbol: str,
+        ticker: str,
+        interval: str = DEFAULT_INTERVAL,
+    ) -> pd.DataFrame | None:
         """
-        Yahoo Finance හරහා දත්ත ලබා ගැනීම.
-        
-        Args:
-            symbol: බොට් පාවිච්චි කරන නම (උදා: EURUSD)
-            ticker: Yahoo Finance හි Ticker නම (උදා: EURUSD=X, GC=F)
-            interval: දත්ත කාල පරතරය (උදා: "1m", "5m", "15m", "1h")
-        """
-        # Yahoo Finance සඳහා Ticker ආකෘතිය සෑදීම
-        # Forex pairs වලට '=X' එකතු විය යුතුයි. Crypto වලට '-USD' එකතු විය යුතුයි.
-        # config.py හි දැනටමත් යම් ආකෘතියක් ඇත්නම් එයම භාවිතා කරන්න. 
-        # එසේ නොමැති නම් මෙහිදී සකසමු:
-        yf_ticker = ticker
-        
-        # මෙය ආරක්ෂිත පියවරක් පමණි (ticker එක වැරදිවී ඇත්නම් නිවැරදි කිරීමට)
-        if len(ticker) == 6 and not ("=" in ticker or "-" in ticker):
-             yf_ticker = f"{ticker}=X" # උදා: EURUSD=X
-        elif ticker.upper() in ["GOLD", "XAUUSD"]:
-             yf_ticker = "GC=F" # Gold Futures (yfinance standard)
-        elif ticker.upper() == "BTCUSD":
-             yf_ticker = "BTC-USD"
-             
-        try:
-            # ── දත්ත ඉල්ලීම (Fetch) ──────────────────────────────────────────
-            # interval="1m" සඳහා ලබාගත හැක්කේ උපරිම දින 7ක දත්ත පමණි (yfinance නීතිය).
-            # "1h" සඳහා දින 60ක් ලබාගත හැක. අපි අවශ්‍ය ප්‍රමාණයට පමණක් ලබා ගනිමු.
-            
-            period = "5d" if interval in ["1m", "5m"] else "60d"
-            
-            data = yf.download(tickers=yf_ticker, period=period, interval=interval, progress=False)
+        Yahoo Finance හරහා candle data ගනී.
 
-            if data.empty:
+        Args:
+            symbol:   bot display name   (e.g. "EURUSD")
+            ticker:   Yahoo ticker       (e.g. "EURUSD=X", "GC=F", "BTC-USD")
+            interval: candle size        (e.g. "1h", "5m") — NOT period like "1y"
+        """
+
+        # ── Ticker normalise ─────────────────────────────────────────────────
+        yf_ticker = ticker
+        if len(ticker) == 6 and "=" not in ticker and "-" not in ticker:
+            yf_ticker = f"{ticker}=X"
+        elif ticker.upper() in ("GOLD", "XAUUSD"):
+            yf_ticker = "GC=F"
+        elif ticker.upper() == "BTCUSD":
+            yf_ticker = "BTC-USD"
+
+        # ── Interval validation + fix ────────────────────────────────────────
+        # config.py ෙදිගටම "1y" වැනි wrong value ආවොත් default ට fallback
+        valid_intervals = {"1m","2m","5m","15m","30m","60m","1h","4h","1d","5d","1wk","1mo","3mo"}
+        if interval not in valid_intervals:
+            print(f"     ⚠️  Invalid interval '{interval}' → using '{DEFAULT_INTERVAL}'")
+            interval = DEFAULT_INTERVAL
+
+        period = INTERVAL_PERIOD_MAP.get(interval, "60d")
+
+        try:
+            data = yf.download(
+                tickers=yf_ticker,
+                period=period,
+                interval=interval,
+                progress=False,
+                auto_adjust=True,
+            )
+
+            if data is None or data.empty:
                 print(f"     ❌ No data values found for {symbol} ({yf_ticker})")
                 return None
 
-            # ── DataFrame Build & Clean ──────────────────────────────────────
-            # yfinance මඟින් MultiIndex තීරු ලබා දිය හැක, එබැවින් එය සාමාන්‍ය තත්ත්වයට පත් කරමු
+            # ── MultiIndex flatten ───────────────────────────────────────────
             if isinstance(data.columns, pd.MultiIndex):
                 data.columns = data.columns.droplevel(1)
 
-            df = data.copy()
-            
-            # අවශ්‍ය තීරු පමණක් තබා ගැනීම
-            df = df[['Open', 'High', 'Low', 'Close', 'Volume']]
-            
-            # දත්ත float බවට පත් කිරීම
-            df = df.astype(float)
-            
-            # දත්ත හිස්තැන් (NaN) ඇත්නම් ඉවත් කිරීම (Forex වල සති අන්ත දත්ත නිසා)
-            df = df.dropna()
+            df = data[["Open", "High", "Low", "Close", "Volume"]].copy()
+            df = df.astype(float).dropna()
 
+            if len(df) < 50:
+                print(f"     ❌ Too few candles ({len(df)}) for {symbol} — skipping")
+                return None
+
+            print(f"     📦 {len(df)} candles ({interval} / {period})")
             return df
 
         except Exception as e:
             print(f"     ❌ Fetch error ({symbol} / {yf_ticker}): {e}")
             return None
+
+    def get_news_candles(self, symbol: str, ticker: str) -> pd.DataFrame | None:
+        """News momentum ට fast (5m) candles — short-term direction detect කිරීමට."""
+        return self.get_candles(symbol, ticker, interval=NEWS_INTERVAL)
