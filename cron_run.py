@@ -1,18 +1,15 @@
 """
-cron_run.py — Hourly cron scan + News Momentum real-time watcher
+cron_run.py — Hourly cron scan + News Momentum real-time watcher + AUTO TRADING
 ================================================================
 Mode 1 (Normal):    සෑම පැය 1 කට scan කරයි — technical signals
 Mode 2 (News):      News window open වූ විගස විනාඩි 1 කට scan කරයි — momentum signals
                     News window (1–30 min after event) close වූ විගස normal mode ට හැරෙයි
-
-Fixes:
-  - is_news_scan ParameterError fix
-  - News window ෙදිගටම same pair opposite direction block (30 min)
 """
 
 import time
 import sys
 from datetime import datetime, timezone, timedelta
+import MetaTrader5 as mt5 # අලුතින් එකතු කරන ලදි
 
 from config import (
     TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID,
@@ -36,18 +33,19 @@ QUALITY_MIN_STRENGTH      = 60
 NEWS_SIGNAL_COOLDOWN_MIN  = 30    # News signal: same pair ANY direction — විනාඩි 30 block
 NORMAL_SIGNAL_COOLDOWN_H  = 1     # Normal signal: පැය 1 cooldown
 
+# ── MT5 Credentials (ඔබේ විස්තර මෙහි ඇතුළත් කරන්න) ───────────────────────────
+MT5_LOGIN = 336414528
+MT5_PASSWORD = "Tp#@76502003"  # <--- මෙතනට ඔයාගේ පාස්වර්ඩ් එක දෙන්න
+MT5_SERVER = "XMGlobal-MT5 9"
+
 fetcher  = DataFetcher()
 notifier = TelegramNotifier(TELEGRAM_BOT_TOKEN, TELEGRAM_CHAT_ID)
 
-# Sent signal tracking:
-#   News:   {"EURUSD": datetime}          — pair level (BUY/SELL both blocked)
-#   Normal: {"EURUSD_BUY": datetime}      — direction level
-_news_last_sent:   dict[str, datetime] = {}
+_news_last_sent:  dict[str, datetime] = {}
 _normal_last_sent: dict[str, datetime] = {}
 
 
 def _news_cooldown_ok(pair: str) -> bool:
-    """News mode — same pair ට ANY direction 30 min block."""
     last = _news_last_sent.get(pair)
     if last is None:
         return True
@@ -56,7 +54,6 @@ def _news_cooldown_ok(pair: str) -> bool:
 
 
 def _normal_cooldown_ok(pair: str, direction: str) -> bool:
-    """Normal mode — same pair + same direction 1 hour block."""
     key  = f"{pair}_{direction}"
     last = _normal_last_sent.get(key)
     if last is None:
@@ -74,21 +71,59 @@ def _mark_normal_sent(pair: str, direction: str):
 
 
 def _is_news_window_active() -> tuple[bool, str]:
-    """ඕනෑම pair එකක news window open ද කියලා check කරයි."""
     for pair in FOREX_PAIRS:
         status, title = check_news_conflict(pair)
         if status == "NEWS_MOMENTUM":
             return True, f"{pair}: {title}"
     return False, ""
 
+# ── Auto Trading Function ─────────────────────────────────────────────────────
+def execute_trade(symbol: str, direction: str):
+    """MT5 හරහා කෙළින්ම Order එක දමන ශ්‍රිතය"""
+    
+    # Lot size තීරණය කිරීම (GOLD, BTCUSD සඳහා 0.02, අනෙක්වාට 0.05)
+    if symbol in ["GOLD", "BTCUSD", "XAUUSD"]:
+        lot_size = 0.02
+    else:
+        lot_size = 0.05
+
+    # Symbol එක Market Watch එකට ඇතුළත් කිරීම
+    mt5.symbol_select(symbol, True)
+    
+    # දැනට පවතින මිල ලබා ගැනීම (BUY නම් ask, SELL නම් bid)
+    tick = mt5.symbol_info_tick(symbol)
+    if tick is None:
+        print(f"     ❌ Trade Failed: Could not get tick data for {symbol}")
+        return False
+        
+    price = tick.ask if direction == "BUY" else tick.bid
+    order_type = mt5.ORDER_TYPE_BUY if direction == "BUY" else mt5.ORDER_TYPE_SELL
+
+    request = {
+        "action": mt5.TRADE_ACTION_DEAL,
+        "symbol": symbol,
+        "volume": float(lot_size),
+        "type": order_type,
+        "price": price,
+        "deviation": 20, 
+        "magic": 234000,
+        "comment": "Bot Signal",
+        "type_time": mt5.ORDER_TIME_GTC,
+        "type_filling": mt5.ORDER_FILLING_IOC, # XM සඳහා සුදුසුයි
+    }
+
+    print(f"     ⚙️ Placing {direction} on {symbol} | Lot: {lot_size}")
+    result = mt5.order_send(request)
+    
+    if result.retcode != mt5.TRADE_RETCODE_DONE:
+        print(f"     ❌ Trade Failed: {result.comment} (Code: {result.retcode})")
+        return False
+    else:
+        print(f"     💵 ✅ Trade Executed Successfully! Ticket: {result.order}")
+        return True
+
 
 def _scan(label: str = "Scan", is_news_scan: bool = False) -> int:
-    """
-    සියලු pairs scan කර signals send කරයි.
-    is_news_scan=True  → 5m candles, pair-level cooldown
-    is_news_scan=False → 1h candles, direction-level cooldown
-    Returns: sent signal count
-    """
     now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
     print(f"\n{'═'*52}")
     print(f"  🚀 {label}  |  {now}")
@@ -127,9 +162,7 @@ def _scan(label: str = "Scan", is_news_scan: bool = False) -> int:
             print(f"     → {d:7s} | {s:3d}% | {score}/6  ⚠️  Below quality threshold")
             continue
 
-        # ── Cooldown check ────────────────────────────────────────────────
         if is_news_scan:
-            # News mode: same pair BUY ආවා නම් SELL ද block — 30 min
             if not _news_cooldown_ok(name):
                 remaining = int(NEWS_SIGNAL_COOLDOWN_MIN - (
                     datetime.now(timezone.utc) - _news_last_sent[name]
@@ -137,13 +170,17 @@ def _scan(label: str = "Scan", is_news_scan: bool = False) -> int:
                 print(f"     → {d:7s} | {s:3d}% | {score}/6  ⏭️  News cooldown ({remaining}min left)")
                 continue
         else:
-            # Normal mode: same pair + same direction 1 hour block
             if not _normal_cooldown_ok(name, d):
                 print(f"     → {d:7s} | {s:3d}% | {score}/6  ⏭️  Cooldown active")
                 continue
 
-        # ── Send signal ───────────────────────────────────────────────────
+        # ── Send signal & Execute Trade ───────────────────────────────────────────
         print(f"     → {d:7s} | {s:3d}% | {score}/6  ✅ SIGNAL{tag}")
+        
+        # 1. MT5 එකට ට්‍රේඩ් එක දානවා
+        execute_trade(name, d)
+        
+        # 2. ටෙලිග්‍රෑම් එකට සිග්නල් එක යවනවා (ඔයාට බලාගන්න)
         notifier.send_signal(sig)
 
         if is_news_scan:
@@ -161,33 +198,39 @@ def _scan(label: str = "Scan", is_news_scan: bool = False) -> int:
 
 
 def run_monitor():
-    """
-    Main loop:
-      - News window නැත්නම්  → NORMAL mode (60 min interval)
-      - News window ඇත්නම්  → NEWS mode   (1 min interval)
-    """
     print("""
 ╔══════════════════════════════════════════╗
-   🤖  FOREX SIGNAL BOT  v4.1
+   🤖  FOREX SIGNAL BOT  v5.0 (AUTO-TRADE)
        News Momentum + Technical Signals
 ╚══════════════════════════════════════════╝
 """)
+    
+    # ── MT5 Initialize & Login ──────────────────────────────────────────────
+    print("  🔌 Connecting to MT5...")
+    if not mt5.initialize():
+        print("  ❌ MT5 initialize() failed. Check if MT5 is installed and running.")
+        sys.exit(1)
+        
+    authorized = mt5.login(MT5_LOGIN, password=MT5_PASSWORD, server=MT5_SERVER)
+    if authorized:
+        print(f"  ✅ MT5 Connected Successfully! (Account: {MT5_LOGIN})")
+    else:
+        print(f"  ❌ MT5 Login failed! Error Code: {mt5.last_error()}")
+        sys.exit(1)
+    
+    print("─" * 52)
     print(f"  ⚙️  Normal scan     : every {NORMAL_SCAN_INTERVAL_MIN} minutes")
     print(f"  ⚙️  News scan       : every {NEWS_SCAN_INTERVAL_SEC} seconds")
-    print(f"  ⚙️  News cooldown   : {NEWS_SIGNAL_COOLDOWN_MIN} min (any direction)")
-    print(f"  ⚙️  Normal cooldown : {NORMAL_SIGNAL_COOLDOWN_H} hour (same direction)")
     print(f"  ⚙️  Pairs           : {', '.join(FOREX_PAIRS.keys())}")
     print(f"\n  Press Ctrl+C to stop\n")
     print("─" * 52)
 
     notifier.send(
-        f"🤖 <b>Forex Bot v4.1 Started</b>\n"
+        f"🤖 <b>Forex Bot v5.0 (Auto-Trade) Started</b>\n"
         f"━━━━━━━━━━━━━━━━━━━━\n"
+        f"🔌 MT5 Connection: <b>SUCCESS</b>\n"
         f"📰 News Momentum mode: <b>ACTIVE</b>\n"
         f"📊 Technical mode: <b>ACTIVE</b>\n"
-        f"🔍 {len(FOREX_PAIRS)} pairs monitored\n"
-        f"🛡️ News cooldown: <b>30 min</b> (flip protection)\n"
-        f"<i>News break → 60s scan. Normal → 60min scan.</i>"
     )
 
     last_normal_scan = datetime.now(timezone.utc) - timedelta(hours=1)
@@ -196,7 +239,6 @@ def run_monitor():
         try:
             now_utc = datetime.now(timezone.utc)
 
-            # ── NEWS MODE ─────────────────────────────────────────────────
             news_active, news_info = _is_news_window_active()
 
             if news_active:
@@ -204,9 +246,7 @@ def run_monitor():
                 _scan(label="News Momentum Scan", is_news_scan=True)
                 print(f"  ⏰ Next news scan in {NEWS_SCAN_INTERVAL_SEC}s...")
                 time.sleep(NEWS_SCAN_INTERVAL_SEC)
-
             else:
-                # ── NORMAL MODE ───────────────────────────────────────────
                 elapsed_min = (now_utc - last_normal_scan).total_seconds() / 60
 
                 if elapsed_min >= NORMAL_SCAN_INTERVAL_MIN:
@@ -219,12 +259,12 @@ def run_monitor():
                     print(f"  💤 Normal mode — next scan in {remaining} min  |  "
                           f"{now_utc.strftime('%H:%M UTC')}")
 
-                # News check: 30s (cached data only — API calls නෑ)
                 time.sleep(30)
 
         except KeyboardInterrupt:
             print("\n\n  🛑 Bot stopped.\n")
             notifier.send("🛑 <b>Forex Bot stopped.</b>")
+            mt5.shutdown() # Stop MT5 connection
             break
 
         except Exception as e:
