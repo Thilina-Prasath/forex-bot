@@ -205,12 +205,10 @@ def _scan(label: str = "Scan", is_news_scan: bool = False) -> int:
 
 
 def run_monitor():
-    print("""
-╔══════════════════════════════════════════╗
-   🤖  FOREX SIGNAL BOT  v5.0 (AUTO-TRADE)
-       News Momentum + Technical Signals
-╚══════════════════════════════════════════╝
-""")
+    print("--------------------------------------------------")
+    print("  FOREX SIGNAL BOT v5.0 (AUTO-TRADE)              ")
+    print("  News Momentum + Technical Signals               ")
+    print("--------------------------------------------------")
     
     print("  🔌 Connecting to MT5...")
     if not mt5.initialize():
