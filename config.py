@@ -1,8 +1,8 @@
 import os
 
 # ── Telegram ─────────────────────────────────────────────────────────────────
-TELEGRAM_BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "")
-TELEGRAM_CHAT_ID   = os.environ.get("TELEGRAM_CHAT_ID", "")
+TELEGRAM_BOT_TOKEN = "8408162998:AAE9ZjEvvAFmAI6HOaase1ca3LcMOdxoJVo"
+TELEGRAM_CHAT_ID   = "8199946511"
 
 # ── TwelveData API ───────────────────────────────────────────────────────────
 # Get free key: https://twelvedata.com/
