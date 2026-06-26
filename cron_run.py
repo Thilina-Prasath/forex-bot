@@ -8,6 +8,7 @@ Mode 2 (News):      News window open වූ විගස විනාඩි 1 �
 
 import time
 import sys
+sys.stdout.reconfigure(encoding='utf-8')
 from datetime import datetime, timezone, timedelta
 import MetaTrader5 as mt5
 
