@@ -1,9 +1,9 @@
 """
 cron_run.py — Hourly cron scan + News Momentum real-time watcher + AUTO TRADING
 ================================================================================
-Mode 1 (Normal):    සෑම පැය 1 කට scan කරයි — Telegram වෙත පමණක් යවයි (No Auto-Trade)
-Mode 2 (News):      News window open වූ විගස විනාඩි 1 කට scan කරයි.
-                    6/6 Score එකක් ආවොත් පමණක් MT5 Auto-Trade කරයි + Telegram යවයි.
+Mode 1 (Normal):   සෑම පැය 1 කට scan කරයි — Telegram වෙත පමණක් යවයි (No Auto-Trade)
+Mode 2 (News):     News window open වූ විගස විනාඩි 1 කට scan කරයි.
+                   6/6 Score එකක් ආවොත් පමණක් MT5 Auto-Trade කරයි + Telegram යවයි.
 """
 
 import time
@@ -80,7 +80,7 @@ def _is_news_window_active() -> tuple[bool, str]:
 
 
 # ── Auto Trading Execution Engine ─────────────────────────────────────────────
-def execute_trade(symbol: str, direction: str) -> bool:
+def execute_trade(symbol: str, direction: str, sl: float, tp: float) -> bool:
     """6/6 News signals සඳහා පමණක් MT5 Order දමන ශ්‍රිතය"""
     
     now = datetime.now(timezone.utc)
@@ -109,6 +109,8 @@ def execute_trade(symbol: str, direction: str) -> bool:
         "volume": float(lot_size),
         "type": order_type,
         "price": price,
+        "sl": float(sl),           
+        "tp": float(tp),           
         "deviation": 20, 
         "magic": 234000,
         "comment": "AutoNews_6/6",
@@ -116,7 +118,7 @@ def execute_trade(symbol: str, direction: str) -> bool:
         "type_filling": mt5.ORDER_FILLING_IOC,
     }
 
-    print(f"     🚀 Placing AUTO {direction} on {symbol} | Lot: {lot_size}")
+    print(f"     🚀 Placing AUTO {direction} on {symbol} | Lot: {lot_size} | SL: {sl} | TP: {tp}")
     result = mt5.order_send(request)
     
     if result.retcode != mt5.TRADE_RETCODE_DONE:
@@ -153,7 +155,7 @@ def _scan(label: str = "Scan", is_news_scan: bool = False) -> int:
 
         d       = sig["direction"]
         s       = sig["strength"]
-        score   = sig["buy_score"] if d == "BUY" else sig["sell_score"]
+        score   = max(sig["buy_score"], sig["sell_score"]) # Display Bug Fixed
         is_news = sig.get("news_momentum", False)
         tag     = " 📰" if is_news else ""
 
@@ -185,7 +187,9 @@ def _scan(label: str = "Scan", is_news_scan: bool = False) -> int:
 
         # 2. පියවර: Auto-Trade තීරණය (News scan එකක් + Score එක හරියටම 6/6 නම් පමණක් Execution කරයි)
         if is_news_scan and score >= 6:
-            execute_trade(name, d)
+            sl_val = sig.get("sl", 0.0)
+            tp_val = sig.get("tp1", 0.0)  # TP1 භාවිත කරයි (ආරක්ෂිතම ලාභය සඳහා)
+            execute_trade(name, d, sl_val, tp_val)
         elif is_news_scan and score < 6:
             print(f"     ℹ️  News Score {score}/6 (Auto-Trade requires 6/6) -> Telegram Only")
         else:
