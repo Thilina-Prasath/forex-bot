@@ -107,17 +107,20 @@ def _detect_news_direction(closes: list[float], rsi_now: float, ema20: float) ->
 
     closes: [oldest ... newest] — අවම 4 values ඕනේ
     """
-    if len(closes) < 4:
+    if len(closes) < 3:
         return "NEUTRAL"
 
-    p, p1, p2, p3 = closes[-1], closes[-2], closes[-3], closes[-4]
+    p  = closes[-1]
+    p1 = closes[-2]
+    p2 = closes[-3]
 
-    rising  = p > p1 and p1 > p2
-    falling = p < p1 and p1 < p2
+    # Net direction over 2 candles (1 flat candle tolerate කරයි)
+    net_rising  = p > p2
+    net_falling = p < p2
 
-    if rising and p > ema20 and rsi_now > 45:
+    if net_rising  and p >= ema20 and rsi_now >= 45:
         return "BUY"
-    if falling and p < ema20 and rsi_now < 55:
+    if net_falling and p <= ema20 and rsi_now <= 55:
         return "SELL"
     return "NEUTRAL"
 
