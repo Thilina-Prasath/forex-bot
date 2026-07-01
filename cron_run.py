@@ -379,6 +379,7 @@ def run_monitor():
                     last_normal_scan = now_utc
                     next_time = (now_utc + timedelta(minutes=NORMAL_SCAN_INTERVAL_MIN)).strftime("%H:%M UTC")
                     print(f"  ⏰ Next normal scan at {next_time}")
+                    time.sleep(60)  # scan ට පස්සේ loop restart block
                 else:
                     remaining = int(NORMAL_SCAN_INTERVAL_MIN - elapsed_min)
                     print(f"  💤 Next scan in {remaining}m | {now_utc.strftime('%H:%M UTC')}")
