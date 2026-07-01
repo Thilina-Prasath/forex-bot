@@ -382,8 +382,7 @@ def run_monitor():
                 else:
                     remaining = int(NORMAL_SCAN_INTERVAL_MIN - elapsed_min)
                     print(f"  💤 Next scan in {remaining}m | {now_utc.strftime('%H:%M UTC')}")
-
-                time.sleep(30)
+                    time.sleep(60)
 
         except KeyboardInterrupt:
             print("\n\n  🛑 Bot stopped.\n")
