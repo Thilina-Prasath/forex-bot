@@ -271,6 +271,13 @@ class ForexAnalyzer:
         #  ADX >= 30 requirement නෑ — news just broke නිසා ADX lag කරයි.
         # ════════════════════════════════════════════════════════════════════
         if is_news_momentum:
+            # ADX too low = weak momentum = high reversal risk
+            if adx_val < 20:
+                return _empty_result(
+                    self.symbol, price,
+                    f"⚠️ News signal ADX {adx_val} < 20 — momentum too weak, skip",
+                    True, session_name,
+                )
             closes_list = [round(float(c.iloc[i]), 5) for i in range(-5, 0)]
             news_dir    = _detect_news_direction(closes_list, rsi_now, ema20_v)
 
