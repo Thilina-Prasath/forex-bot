@@ -28,7 +28,7 @@ from news_filter       import check_news_conflict
 
 # ── Settings ──────────────────────────────────────────────────────────────────
 NORMAL_SCAN_INTERVAL_MIN  = 60
-NEWS_SCAN_INTERVAL_SEC    = 60
+NEWS_SCAN_INTERVAL_SEC    = 15
 QUALITY_MIN_SCORE         = 4
 QUALITY_MIN_STRENGTH      = 60
 NEWS_SIGNAL_COOLDOWN_MIN  = 30

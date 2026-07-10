@@ -278,7 +278,11 @@ class ForexAnalyzer:
                     f"⚠️ News signal ADX {adx_val} < 20 — momentum too weak, skip",
                     True, session_name,
                 )
-            closes_list = [round(float(c.iloc[i]), 5) for i in range(-5, 0)]
+            # CONFIRMED CLOSE LOGIC:
+            # closes[-1] = still-forming candle (spike, unreliable)
+            # closes[-2] = last CLOSED candle (confirmed)
+            # ඒ නිසා [-6:-1] use කරනවා — spike candle exclude කරයි
+            closes_list = [round(float(c.iloc[i]), 5) for i in range(-6, -1)]
             news_dir    = _detect_news_direction(closes_list, rsi_now, ema20_v)
 
             if news_dir != "NEUTRAL":
