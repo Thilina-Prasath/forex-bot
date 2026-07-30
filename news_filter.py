@@ -38,7 +38,7 @@ def get_high_impact_news() -> list:
     return _cached_news or []
 
 # ── වෙනස මෙතනයි (safe_delay: int = 1) ──────────────────────────────────────
-def check_news_conflict(symbol: str, pre_buffer: int = 15, post_buffer: int = 30, safe_delay: int = 1) -> tuple[str, str]:
+def check_news_conflict(symbol: str, pre_buffer: int = 15, post_buffer: int = 30, safe_delay: int = 3) -> tuple[str, str]:
     """
     Returns:
         ("BLOCKED", title)       — අතිශය අවදානම් (නිව්ස් එකට පෙර විනාඩි 15 සිට පසු විනාඩි 1 දක්වා)

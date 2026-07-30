@@ -98,29 +98,28 @@ def _empty_result(symbol, price, reason, session_ok, session_name, news_blocked=
 # ─────────────────────────────────────────────────────────────────────────────
 def _detect_news_direction(closes: list[float], rsi_now: float, ema20: float) -> str:
     """
-    News break වෙලා price direction confirm කරයි.
-
-    Logic:
-      - Last 3 closes continuously rising  AND price > EMA20 AND RSI > 45  → BUY
-      - Last 3 closes continuously falling AND price < EMA20 AND RSI < 55  → SELL
-      - Otherwise → NEUTRAL (momentum clear නෑ)
-
-    closes: [oldest ... newest] — අවම 4 values ඕනේ
+    News direction — 2 consecutive CLOSED candles same direction require කරයි.
+    Whipsaw/spike candles reject කරයි.
     """
-    if len(closes) < 3:
+    if len(closes) < 4:
         return "NEUTRAL"
 
-    p  = closes[-1]
-    p1 = closes[-2]
-    p2 = closes[-3]
+    # Last 2 confirmed closed candles ([-6:-1] slice use නිසා c1=confirmed)
+    c1 = closes[-1]
+    c2 = closes[-2]
+    c3 = closes[-3]
 
-    # Net direction over 2 candles (1 flat candle tolerate කරයි)
-    net_rising  = p > p2
-    net_falling = p < p2
+    # 2 consecutive same-direction — spike alone reject
+    two_rising  = (c1 > c2) and (c2 > c3)
+    two_falling = (c1 < c2) and (c2 < c3)
 
-    if net_rising  and p >= ema20 and rsi_now >= 45:
+    # RSI midline confirmation
+    rsi_bullish = rsi_now >= 50
+    rsi_bearish = rsi_now <= 50
+
+    if two_rising  and c1 > ema20 and rsi_bullish:
         return "BUY"
-    if net_falling and p <= ema20 and rsi_now <= 55:
+    if two_falling and c1 < ema20 and rsi_bearish:
         return "SELL"
     return "NEUTRAL"
 
